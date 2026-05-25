@@ -42,7 +42,7 @@ class MySql extends DefaultEx
 
         $sql = array_reduce(
             $fragments,
-            fn($carry, [$op, $frag]) => $carry === '' ? $frag : "$carry $op $frag",
+            fn($carry, $item) => $carry === '' ? $item[1] : "$carry {$item[0]} {$item[1]}",
             ''
         );
 
