@@ -13,7 +13,7 @@ class Datetime
         }
 
         if ($value === null) {
-            $value = new \Flames\DateTimeImmutable();
+            $value = new \Flames\Date\DateTimeImmutable();
         }
 
         return $value->setTimezone(TimeZone::getUtc())->format('Y-m-d H:i:s.u');
@@ -25,25 +25,25 @@ class Datetime
             return null;
         }
 
-        if ($value instanceof \Flames\DateTimeImmutable || $value instanceof \Flames\DateTime) {
+        if ($value instanceof \Flames\Date\DateTimeImmutable || $value instanceof \Flames\Date\DateTime) {
             return $value;
         }
         if ($value instanceof \DateTimeImmutable || $value instanceof \DateTime) {
-            return new \Flames\DateTimeImmutable($value->format('Y-m-d H:i:s.u'), $value->getTimezone());
+            return new \Flames\Date\DateTimeImmutable($value->format('Y-m-d H:i:s.u'), $value->getTimezone());
         }
         if (is_string($value)) {
             if ($fromDb) {
-                $value = (new \Flames\DateTimeImmutable($value, TimeZone::getUtc()))->setTimezone(TimeZone::getDefault());
+                $value = (new \Flames\Date\DateTimeImmutable($value, TimeZone::getUtc()))->setTimezone(TimeZone::getDefault());
             }
-            return new \Flames\DateTimeImmutable($value);
+            return new \Flames\Date\DateTimeImmutable($value);
         }
         if (is_int($value)) {
             if ($fromDb) {
-                $value = (new \Flames\DateTimeImmutable($value, TimeZone::getUtc()))->setTimezone(TimeZone::getDefault());
+                $value = (new \Flames\Date\DateTimeImmutable($value, TimeZone::getUtc()))->setTimezone(TimeZone::getDefault());
             }
-            return (new \Flames\DateTimeImmutable($value))->setTimestamp($value);
+            return (new \Flames\Date\DateTimeImmutable($value))->setTimestamp($value);
         }
 
-        return new \Flames\DateTimeImmutable();
+        return new \Flames\Date\DateTimeImmutable();
     }
 }
