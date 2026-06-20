@@ -7,6 +7,8 @@ namespace Flames\Orm\Database\Driver;
 use Exception;
 use Flames\Collection\Arr;
 use Flames\Http;
+use Flames\Orm\Database\Type\Kinds;
+use Flames\Orm\Database\Type\Maps;
 
 /**
  * @internal
@@ -17,6 +19,7 @@ class Meilisearch extends DefaultEx
 
     protected $connection = null;
     protected $allIndexes = [];
+    private static bool $containsFilterEnabled = false;
 
     public function __construct(\Flames\Orm\Database\RawConnection\Meilisearch $connection)
     {
@@ -40,6 +43,8 @@ class Meilisearch extends DefaultEx
         /** @var Http\Client $client */
         $client = $connection->getClient();
 
+        self::_ensureContainsFilterEnabled($client);
+
         if (in_array($data->table, $this->allIndexes, true)) {
             return true;
         }
@@ -49,61 +54,164 @@ class Meilisearch extends DefaultEx
             'indexes?limit=' . PHP_INT_MAX
         );
 
-        // Case exists, skip
-        $results = json_decode($request->getBody()->getContents())->results;
+        $indexExists = false;
+        $results = json_decode($request->getBody()->getContents())->results ?? [];
         foreach ($results as $result) {
             $this->allIndexes[] = $result->uid;
             if ($result->uid === $data->table) {
-                return true; // already exists — migrate skipped
+                $indexExists = true;
+                break;
             }
         }
 
-        $request = $client->request(
-            'POST',
-            'indexes',
-            [
-                'headers' => [
-                    'Content-Type' => 'application/json'
-                ],
-                'body' => json_encode((object)[
-                    'uid' => $data->table,
-                    'primaryKey' => 'id'
-                ])
-            ]
-        );
-
-        $taskUid = (int)json_decode($request->getBody()->getContents())->taskUid;
-        if ($taskUid === 0) {
-            throw new Exception('Failed migrate model class ' . $data->class . ' with meilisearch API.');
-        }
-
-        $errorMessage = null;
-        do {
-            usleep(1000);
+        if ($indexExists === false) {
             $request = $client->request(
-                'GET',
-                ('tasks/' . $taskUid),
+                'POST',
+                'indexes',
                 [
                     'headers' => [
-                        'Content-Type' => 'application/json'
-                    ]
+                        'Content-Type' => 'application/json',
+                    ],
+                    'body' => json_encode((object) [
+                        'uid'        => $data->table,
+                        'primaryKey' => self::_resolvePrimaryKeyName($data),
+                    ]),
                 ]
             );
 
-            $requestData = json_decode($request->getBody()->getContents());
-            $status = $requestData->status;
-
-            if ($status === 'failed') {
-                $errorMessage = (' ' . $requestData->error->message);
-            }
-        } while ($status === 'processing');
-
-        if ($status !== 'succeeded') {
-            throw new Exception('Failed migrate model class ' . $data->class . ' with meilisearch API.' . $errorMessage);
+            self::_waitForTask(
+                $client,
+                self::_extractTaskUid($request, 'create index for model class ' . $data->class),
+            );
         }
+
+        self::_syncIndexSettings($client, $data);
 
         $this->allIndexes[] = $data->table;
 
         return true;
+    }
+
+    private static function _syncIndexSettings(Http\Client $client, object $data): void
+    {
+        $attributes = [];
+        foreach ($data->column as $column) {
+            $attributes[] = $column->name;
+        }
+
+        $request = $client->request(
+            'PATCH',
+            'indexes/' . $data->table . '/settings',
+            [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                ],
+                'body' => json_encode([
+                    'filterableAttributes' => $attributes,
+                    'sortableAttributes'   => $attributes,
+                    'searchableAttributes' => self::_resolveSearchableAttributes($data),
+                ], JSON_THROW_ON_ERROR),
+            ]
+        );
+
+        self::_waitForTask(
+            $client,
+            self::_extractTaskUid($request, 'configure index settings for model class ' . $data->class),
+        );
+    }
+
+    private static function _ensureContainsFilterEnabled(Http\Client $client): void
+    {
+        if (self::$containsFilterEnabled) {
+            return;
+        }
+
+        $response = $client->request('GET', 'experimental-features');
+        $features = json_decode($response->getBody()->getContents(), true);
+
+        if (($features['containsFilter'] ?? false) !== true) {
+            $client->request(
+                'PATCH',
+                'experimental-features',
+                [
+                    'headers' => [
+                        'Content-Type' => 'application/json',
+                    ],
+                    'body' => json_encode(['containsFilter' => true], JSON_THROW_ON_ERROR),
+                ]
+            );
+        }
+
+        self::$containsFilterEnabled = true;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function _resolveSearchableAttributes(object $data): array
+    {
+        $searchable = [];
+
+        foreach ($data->column as $column) {
+            $type = Kinds::normalize((string) ($column->type ?? 'string'));
+            if (in_array($type, Maps::TEXT_SEARCH_MEILI, true)) {
+                $searchable[] = $column->name;
+            }
+        }
+
+        return $searchable !== [] ? $searchable : ['*'];
+    }
+
+    private static function _extractTaskUid(mixed $response, string $context): int
+    {
+        $payload = json_decode($response->getBody()->getContents());
+        $taskUid = (int) ($payload->taskUid ?? 0);
+
+        if ($taskUid === 0) {
+            $message = isset($payload->message) ? ' ' . $payload->message : '';
+            throw new Exception('Failed to ' . $context . ' with meilisearch API.' . $message);
+        }
+
+        return $taskUid;
+    }
+
+    private static function _waitForTask(Http\Client $client, int $taskUid): void
+    {
+        $errorMessage = null;
+
+        do {
+            usleep(1000);
+            $request = $client->request(
+                'GET',
+                'tasks/' . $taskUid,
+                [
+                    'headers' => [
+                        'Content-Type' => 'application/json',
+                    ],
+                ]
+            );
+
+            $requestData = json_decode($request->getBody()->getContents());
+            $status      = $requestData->status ?? null;
+
+            if ($status === 'failed') {
+                $errorMessage = ' ' . ($requestData->error->message ?? 'unknown error');
+            }
+        } while ($status === 'processing' || $status === 'enqueued');
+
+        if ($status !== 'succeeded') {
+            throw new Exception('Failed meilisearch task ' . $taskUid . '.' . ($errorMessage ?? ''));
+        }
+    }
+
+    private static function _resolvePrimaryKeyName($data): string
+    {
+        foreach ($data->column as $column) {
+            if ($column->primary === true) {
+                return $column->name;
+            }
+        }
+
+        return 'id';
     }
 }

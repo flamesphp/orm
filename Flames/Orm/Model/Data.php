@@ -11,7 +11,7 @@ use Flames\Collection\Arr;
  */
 class Data
 {
-    private const __VERSION__ = 17;
+    private const __VERSION__ = 19;
 
     private static array $runtimeCache = [];
 
@@ -164,7 +164,15 @@ class Data
                 throw new \Exception("Property {$propName} on class {$data->class} can't be index and unique together.");
             }
 
+            if ($column->primary === true) {
+                $column->nullable = false;
+            }
+
             $column->type = \Flames\Orm\Database\Type\Kinds::normalize(strtolower((string) $column->type));
+
+            if (\Flames\Orm\Database\Type\Kinds::isSerial($column->type)) {
+                $column->autoIncrement = true;
+            }
 
             if (in_array($column->type, ['enum', 'set'], true)) {
                 $column->enumClass = \Flames\Orm\Database\Type\EnumValues::resolveClass($column->values, $column->phpType);
@@ -179,6 +187,10 @@ class Data
 
             if ($column->unsigned === true && in_array($column->type, \Flames\Orm\Database\Type\Kinds::UNSIGNED, true) === false) {
                 throw new \Exception("Property {$propName} on class {$data->class} can't be unsigned with type {$column->type}.");
+            }
+
+            if ($column->type === 'vector' && ($column->size === null || $column->size < 1)) {
+                throw new \Exception("Property {$propName} on class {$data->class} requires length (dimensions) for vector column.");
             }
 
             $data->column[$propName] = $column;

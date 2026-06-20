@@ -12,4 +12,8 @@ enum WhereType
     case Simple;
     case Raw;
     case Delegate;
+    case NotDelegate;
+    case Expression;
+    case Column;
+    case Bitwise;
 }

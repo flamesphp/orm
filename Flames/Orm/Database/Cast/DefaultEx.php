@@ -15,20 +15,22 @@ class DefaultEx
 
     public static function pre($column, $value, $fromDb = false)
     {
-        return self::_getClass($column->type)::pre($column, $value, $fromDb);
+        return self::_getClass($column)::pre($column, $value, $fromDb);
     }
 
     public static function pos($column, $value, $fromDb = false)
     {
-        return self::_getClass($column->type)::pos($column, $value, $fromDb);
+        return self::_getClass($column)::pos($column, $value, $fromDb);
     }
 
-    private static function _getClass(string $type): string
+    private static function _getClass(object $column): string
     {
-        if (isset(self::$classCache[$type])) {
-            return self::$classCache[$type];
+        $cacheKey = Kinds::resolveCastType($column) . ':' . ($column->size ?? '');
+
+        if (isset(self::$classCache[$cacheKey])) {
+            return self::$classCache[$cacheKey];
         }
 
-        return self::$classCache[$type] = Kinds::castClass($type);
+        return self::$classCache[$cacheKey] = Kinds::castClassForColumn($column);
     }
 }

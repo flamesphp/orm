@@ -9,6 +9,11 @@ namespace Flames\Orm\Database\Driver;
  */
 class Mariadb extends MySql
 {
+    protected static function ddlDriverName(): string
+    {
+        return 'mariadb';
+    }
+
     public function getQueryBuilder($model): \Flames\Orm\Database\QueryBuilder\MariaDb
     {
         return new \Flames\Orm\Database\QueryBuilder\MariaDb($this->connection);

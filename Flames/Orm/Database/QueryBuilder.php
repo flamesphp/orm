@@ -6,6 +6,7 @@ namespace Flames\Orm\Database;
 
 use Flames\Orm\Database\QueryBuilder\MariaDb;
 use Flames\Orm\Database\QueryBuilder\MySql;
+use Flames\Orm\Database\QueryBuilder\Postgresql;
 use PDO;
 use Exception;
 
@@ -21,6 +22,9 @@ class QueryBuilder
         }
         elseif ($type === 'mysql') {
             return new MySql($connection);
+        }
+        elseif ($type === 'postgresql') {
+            return new Postgresql($connection);
         }
     }
 }

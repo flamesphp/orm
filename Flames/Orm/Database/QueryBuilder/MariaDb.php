@@ -7,4 +7,10 @@ namespace Flames\Orm\Database\QueryBuilder;
 /**
  * @internal
  */
-class MariaDb extends MySql {}
+class MariaDb extends MySql
+{
+    protected function _jsonEqualitySql(string $col, string $paramName): string
+    {
+        return "JSON_CONTAINS($col, :$paramName)";
+    }
+}

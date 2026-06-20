@@ -12,7 +12,7 @@ use PDO;
  */
 class Mysql extends DefaultEx
 {
-    protected const __VERSION__ = 2;
+    protected const __VERSION__ = 4;
 
     protected $connection         = null;
     protected array $tableUpdated      = [];
@@ -111,7 +111,7 @@ class Mysql extends DefaultEx
         }
 
         $cols = implode(",\n", array_map(function ($column) {
-            $column->base = self::__createColumnBase($column);
+            $column->base = static::__createColumnBase($column);
             return "\t`{$column->name}` {$column->base}";
         }, (array)$data->column));
 
@@ -162,7 +162,7 @@ class Mysql extends DefaultEx
 
         foreach ($data->column as $column) {
             $columns[] = $column;
-            $base      = self::__createColumnBase($column);
+            $base      = static::__createColumnBase($column);
 
             if (!isset($dbColumns[$column->name])) {
                 $missingDb[] = $column;
@@ -174,7 +174,7 @@ class Mysql extends DefaultEx
         }
 
         foreach ($missingDb as $column) {
-            $base = self::__createColumnBase($column);
+            $base = static::__createColumnBase($column);
 
             // PHP 8.4 array_find: find the column just before this one
             $prev   = null;
@@ -402,9 +402,18 @@ class Mysql extends DefaultEx
         return 'idx_' . substr(sha1(implode("\0", $columns)), 0, 59);
     }
 
+    protected static function ddlDriverName(): string
+    {
+        return 'mysql';
+    }
+
     protected static function __createColumnBase(Arr $column): string
     {
-        $q = \Flames\Orm\Database\Type\Kinds::ddlType($column);
+        $q = \Flames\Orm\Database\Type\Kinds::ddlType($column, static::ddlDriverName());
+
+        if ($column->primary === true) {
+            return $q . ' NOT NULL';
+        }
 
         return $q . match (true) {
             $column->nullable === false          => ' NOT NULL',

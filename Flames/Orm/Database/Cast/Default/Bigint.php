@@ -8,16 +8,16 @@ class Bigint
 {
     public static function pre($column, $value): int|null
     {
-        if ($column->nullable === true && $value === null) {
+        if ($value === null) {
             return null;
         }
 
         return (int) $value;
     }
 
-    public static function pos($column, $value): int|null
+    public static function pos($column, $value, $fromDb = false): int|null
     {
-        if ($column->nullable === true && $value === null) {
+        if ($value === null || $value === false || $value === '') {
             return null;
         }
 

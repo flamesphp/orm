@@ -60,8 +60,17 @@ abstract class Model
             $queryBuilder->setModel(static::class);
 
             $insert = $queryBuilder->insert($data);
-            foreach ($insert as $key => $value) {
-                $this->set($key, $value);
+
+            if ($insert instanceof Arr) {
+                foreach ($insert->toArray() as $key => $value) {
+                    $this->set((string) $key, $value);
+                }
+            } elseif (is_array($insert)) {
+                foreach ($insert as $key => $value) {
+                    $this->set((string) $key, $value);
+                }
+            } elseif ($insert !== null && $insert !== false && $insert !== '') {
+                $this->set($indexColumn->property, $insert);
             }
 
             $this->__changed  = null;
@@ -285,7 +294,7 @@ abstract class Model
         $column = self::$_data[$class]->column[$key];
         $value  = self::cast($key, $value);
 
-        if (in_array($column->type, ['json', 'set'], true)) {
+        if (in_array($column->type, ['json', 'jsonb', 'set'], true)) {
             return ArrValue::fit($column, $value);
         }
 
@@ -454,9 +463,18 @@ abstract class Model
             return 'b64:' . base64_encode($value);
         }
 
+        if (is_object($value) && method_exists($value, 'toArray')) {
+            $serialized = $value->toArray();
+            if (is_array($serialized)) {
+                $value = $serialized;
+            }
+        }
+
         if (is_object($value)) {
             if ($value instanceof \JsonSerializable) {
                 $value = $value->jsonSerialize();
+            } elseif (method_exists($value, '__toString')) {
+                return (string) $value;
             } else {
                 throw new \JsonException('Cannot normalize object of type ' . $value::class . ' for snapshot compare.');
             }

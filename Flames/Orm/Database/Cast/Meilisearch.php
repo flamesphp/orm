@@ -15,21 +15,24 @@ class Meilisearch
 
     public static function pre($column, $value, $fromDb = false)
     {
-        return self::_getClass($column->type)::pre($column, $value, $fromDb);
+        return self::_getClass($column)::pre($column, $value, $fromDb);
     }
 
     public static function pos($column, $value, $fromDb = false)
     {
-        return self::_getClass($column->type)::pos($column, $value, $fromDb);
+        return self::_getClass($column)::pos($column, $value, $fromDb);
     }
 
-    private static function _getClass(string $type): string
+    private static function _getClass(object $column): string
     {
-        if (isset(self::$classCache[$type])) {
-            return self::$classCache[$type];
+        $type     = Kinds::resolveCastType($column, 'meilisearch');
+        $cacheKey = $type . ':' . ($column->size ?? '');
+
+        if (isset(self::$classCache[$cacheKey])) {
+            return self::$classCache[$cacheKey];
         }
 
-        $defaultClass = Kinds::castClass($type);
+        $defaultClass = Kinds::castClassForColumn($column, 'meilisearch');
         $shortName    = substr($defaultClass, strrpos($defaultClass, '\\') + 1);
         $class        = 'Flames\\Orm\\Database\\Cast\\Meilisearch\\' . $shortName;
 
@@ -37,6 +40,6 @@ class Meilisearch
             $class = $defaultClass;
         }
 
-        return self::$classCache[$type] = $class;
+        return self::$classCache[$cacheKey] = $class;
     }
 }

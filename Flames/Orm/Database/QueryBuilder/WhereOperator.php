@@ -11,4 +11,5 @@ enum WhereOperator: string
 {
     case And = 'AND';
     case Or  = 'OR';
+    case Xor = 'XOR';
 }

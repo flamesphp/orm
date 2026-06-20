@@ -16,8 +16,9 @@ class Json
         }
 
         if (is_string($value)) {
-            json_decode($value, flags: JSON_THROW_ON_ERROR);
-            return $value;
+            $decoded = json_decode($value, true, flags: JSON_THROW_ON_ERROR);
+
+            return json_encode($decoded, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
         }
 
         return json_encode(

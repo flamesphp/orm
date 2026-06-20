@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Flames\Orm\Database\Cast\Default;
 
+use Flames\Date\TimeZone;
 use Flames\Orm\Database\Cast\Default\Support\Temporal;
 
 class Date
@@ -13,13 +14,15 @@ class Date
             return null;
         }
 
-        if ($value instanceof \DateTimeInterface) {
-            return Temporal::formatUtc($value, 'Y-m-d');
-        }
+        $dateTime = $value instanceof \DateTimeInterface
+            ? \DateTimeImmutable::createFromInterface($value)
+            : Temporal::parseValue($column, $value, 'Y-m-d');
 
-        $dateTime = Temporal::parseValue($column, $value, 'Y-m-d');
-
-        return Temporal::formatUtc($dateTime, 'Y-m-d');
+        return $dateTime
+            ->setTimezone(TimeZone::getDefault())
+            ->setTime(0, 0, 0)
+            ->setTimezone(TimeZone::getUtc())
+            ->format('Y-m-d');
     }
 
     public static function pos($column, $value, $fromDb = false): mixed
@@ -44,6 +47,35 @@ class Date
             return $value;
         }
 
-        return Temporal::instantiate($targetType, 'Y-m-d', (string) $value, $fromDb);
+        $instance = self::__instantiate($targetType, (string) $value, $fromDb ? TimeZone::getUtc() : null);
+
+        if ($fromDb) {
+            return self::__applyDefaultTimezone($instance);
+        }
+
+        return $instance;
+    }
+
+    private static function __instantiate(
+        string $targetType,
+        string $value,
+        \DateTimeZone|null $timezone = null,
+    ): object {
+        return match ($targetType) {
+            \Flames\Date\Date::class          => new \Flames\Date\Date($value, $timezone),
+            \Flames\Date\DateImmutable::class => new \Flames\Date\DateImmutable($value, $timezone),
+            \DateTime::class                  => new \DateTime($value, $timezone),
+            \DateTimeImmutable::class         => new \DateTimeImmutable($value, $timezone),
+            default                           => new \Flames\Date\Date($value, $timezone),
+        };
+    }
+
+    private static function __applyDefaultTimezone(object $dateTime): object
+    {
+        if (method_exists($dateTime, 'shiftTimezone')) {
+            return $dateTime->shiftTimezone(TimeZone::getDefault());
+        }
+
+        return $dateTime->setTimezone(TimeZone::getDefault());
     }
 }

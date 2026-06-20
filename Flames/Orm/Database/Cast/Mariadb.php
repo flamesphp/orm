@@ -1,10 +1,9 @@
 <?php
 declare(strict_types=1);
 
-
 namespace Flames\Orm\Database\Cast;
 
 /**
  * @internal
  */
-class MariaDb extends DefaultEx {}
+class Mariadb extends Mysql {}

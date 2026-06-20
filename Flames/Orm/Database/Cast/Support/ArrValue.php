@@ -132,7 +132,7 @@ final class ArrValue
             return self::from($value);
         }
 
-        if (self::wantsImmutableArr($column) || in_array($column->type, ['json', 'set'], true)) {
+        if (in_array($column->type, ['json', 'set', 'vector'], true)) {
             return self::fromImmutable($value);
         }
 

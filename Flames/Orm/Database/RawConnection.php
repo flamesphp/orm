@@ -31,11 +31,25 @@ class RawConnection
             } catch (PDOException $e) {
                 throw new \Error($e->getMessage());
             }
+        } elseif ($config->type === 'postgresql') {
+            try {
+                $connectionUri = 'pgsql:host=' . $config->host . ';dbname=' . $config->name . ';port=' . $config->port;
+                self::$connections[$database] = new RawConnection\Pdo($connectionUri, $config->user, $config->password, null, $config, $database);
+            } catch (PDOException $e) {
+                throw new \Error($e->getMessage());
+            }
         } elseif ($config->type === 'meilisearch') {
             self::$connections[$database] = new RawConnection\Meilisearch(
                 'http://' . $config->host . ':' . $config->port . '/',
                 $config->masterKey,
                 $config
+            );
+        } else {
+            $connection = (string) ($config->database ?? $database);
+            $driver     = (string) ($config->type ?? '');
+
+            throw new \RuntimeException(
+                'Database connection "' . $connection . '" uses unsupported driver "' . $driver . '".',
             );
         }
 

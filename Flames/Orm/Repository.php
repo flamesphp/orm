@@ -84,22 +84,69 @@ abstract class Repository
         $queryBuilder = self::getQueryBuilder();
 
         foreach ($filters as $filter) {
-            if ($filter[3] === 'AND') {
-                if ($filter[1] === 'LIKE') {
-                    $queryBuilder = $queryBuilder->whereLike($filter[0], $filter[2]);
-                } else {
-                    $queryBuilder = $queryBuilder->where($filter[0], $filter[1], $filter[2]);
-                }
-            } else {
-                if ($filter[1] === 'LIKE') {
-                    $queryBuilder = $queryBuilder->orWhereLike($filter[0], $filter[2]);
-                } else {
-                    $queryBuilder = $queryBuilder->orWhere($filter[0], $filter[1], $filter[2]);
-                }
-            }
+            self::_applyFilter($queryBuilder, $filter);
         }
 
         return $queryBuilder->get();
+    }
+
+    private static function _applyFilter(Database\QueryBuilder\DefaultEx $queryBuilder, array $filter): void
+    {
+        $operator = strtoupper((string) $filter[1]);
+        $logic    = strtoupper((string) ($filter[3] ?? 'AND'));
+
+        $method = match ($operator) {
+            'LIKE'             => self::_linkMethod('WhereLike', $logic),
+            'NOT LIKE'         => self::_linkMethod('WhereNotLike', $logic),
+            'LIKE_PATTERN'     => self::_linkMethod('WhereLikePattern', $logic),
+            'NOT_LIKE_PATTERN' => self::_linkMethod('WhereNotLikePattern', $logic),
+            'IN'               => self::_linkMethod('WhereIn', $logic),
+            'NOT IN'           => self::_linkMethod('WhereNotIn', $logic),
+            'BETWEEN'          => self::_linkMethod('WhereBetween', $logic),
+            'IS NULL'          => self::_linkMethod('WhereNull', $logic),
+            'IS NOT NULL'      => self::_linkMethod('WhereNotNull', $logic),
+            '!=', '<>'         => self::_linkMethod('WhereNot', $logic),
+            '<=>'              => self::_linkMethod('WhereSafeEqual', $logic),
+            'REGEXP', 'RLIKE'  => self::_linkMethod('WhereRegexp', $logic),
+            'NOT REGEXP', 'NOT RLIKE' => self::_linkMethod('WhereNotRegexp', $logic),
+            '='                => self::_linkMethod('WhereEquals', $logic),
+            '>'                => self::_linkMethod('WhereBigger', $logic),
+            '<'                => self::_linkMethod('WhereLess', $logic),
+            '>='               => self::_linkMethod('WhereBiggerOrEquals', $logic),
+            '<='               => self::_linkMethod('WhereLessOrEquals', $logic),
+            default            => null,
+        };
+
+        if ($method !== null) {
+            if (in_array($operator, ['IS NULL', 'IS NOT NULL'], true)) {
+                $queryBuilder->{$method}($filter[0]);
+                return;
+            }
+
+            $queryBuilder->{$method}($filter[0], $filter[2]);
+            return;
+        }
+
+        if ($logic === 'OR') {
+            $queryBuilder->orWhere($filter[0], $filter[1], $filter[2]);
+            return;
+        }
+
+        if ($logic === 'XOR') {
+            $queryBuilder->xorWhere($filter[0], $filter[1], $filter[2]);
+            return;
+        }
+
+        $queryBuilder->where($filter[0], $filter[1], $filter[2]);
+    }
+
+    private static function _linkMethod(string $method, string $logic): string
+    {
+        return match ($logic) {
+            'OR'  => 'or' . $method,
+            'XOR' => 'xor' . $method,
+            default => lcfirst($method),
+        };
     }
 
     protected static function _parseFilters(Arr|array $filters): array
@@ -113,11 +160,16 @@ abstract class Repository
             if (is_array($filter) || $filter instanceof Arr) {
                 $filterCount = count($filter);
                 if ($filterCount === 2) {
-                    $_filters[] = [$filter[0], '=', $filter[1], 'AND'];
+                    $operator = strtoupper((string) $filter[1]);
+                    if (in_array($operator, ['IS NULL', 'IS NOT NULL'], true)) {
+                        $_filters[] = [$filter[0], $operator, null, 'AND'];
+                    } else {
+                        $_filters[] = [$filter[0], '=', $filter[1], 'AND'];
+                    }
                 } elseif ($filterCount === 3) {
                     $_filters[] = [$filter[0], strtoupper($filter[1]), $filter[2], 'AND'];
                 } elseif ($filterCount === 4) {
-                    $_filters[] = [$filter[0], strtoupper($filter[1]), $filter[2], $filter[3]];
+                    $_filters[] = [$filter[0], strtoupper($filter[1]), $filter[2], strtoupper($filter[3])];
                 } else {
                     throw new Exception('Invalid filter data.');
                 }

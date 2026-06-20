@@ -7,6 +7,7 @@ namespace Flames\Orm\Database;
 use Flames\Orm\Database\Driver\MariaDb;
 use Flames\Orm\Database\Driver\Meilisearch;
 use Flames\Orm\Database\Driver\MySql;
+use Flames\Orm\Database\Driver\Postgresql;
 use PDO;
 use Exception;
 
@@ -27,11 +28,20 @@ class Driver
 
         $rawConnection = RawConnection::getByConfigAndDatabase($config, $database);
 
-        return self::$drivers[$database] = match ($config->type) {
+        $driver = match ($config->type) {
             'mariadb'     => new MariaDb($rawConnection),
             'mysql'       => new MySql($rawConnection),
+            'postgresql'  => new Postgresql($rawConnection),
             'meilisearch' => new Meilisearch($rawConnection),
-            default       => throw new Exception('Database driver ' . $config->type . ' not implemented yet.'),
+            default       => throw new Exception(
+                'Database driver "' . ($config->type ?? '') . '" for connection "'
+                . ($config->database ?? $database ?? 'unknown') . '" is not implemented.',
+            ),
         };
+
+        $driver->name     = (string) $config->type;
+        $driver->database = (string) ($config->database ?? $database ?? '');
+
+        return self::$drivers[$database] = $driver;
     }
 }

@@ -9,5 +9,11 @@ namespace Flames\Orm\Database\Driver;
  */
 class DefaultEx
 {
+    /** Driver type configured in .env (mysql, mariadb, meilisearch, …). */
+    public string $name = '';
+
+    /** Connection key from the model #[Database('…')] attribute. */
+    public string $database = '';
+
     public function migrate($data) {}
 }
