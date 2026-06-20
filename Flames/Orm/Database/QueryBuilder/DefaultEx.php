@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Flames\Orm\Database\QueryBuilder;
 
 use Flames\Collection\Arr;
+use Flames\Orm\Database\QueryBuilder\Support\WhereOperators;
 use Exception;
 
 /**
@@ -12,6 +13,7 @@ use Exception;
  */
 abstract class DefaultEx
 {
+    use WhereOperators;
     protected string $mode           = 'table';
     protected mixed  $connection;
 
@@ -330,6 +332,18 @@ abstract class DefaultEx
         mixed $compareValue,
     ): static {
         $bitOperator = strtoupper(trim($bitOperator));
+        if ($bitOperator === '~') {
+            return $this->_pushWhere($operator, [
+                'type'          => WhereType::Bitwise,
+                'key'           => $this->_resolveWhereKey($key),
+                'bitOperator'   => '~',
+                'operand'       => 0,
+                'condition'     => $compareOperator,
+                'value'         => $compareValue ?? 0,
+                'unary'         => true,
+            ]);
+        }
+
         if (in_array($bitOperator, ['&', '|', '^', '<<', '>>'], true) === false) {
             throw new Exception('Invalid bitwise operator: ' . $bitOperator);
         }
@@ -573,13 +587,13 @@ abstract class DefaultEx
         return $this->_whereBetween(WhereOperator::Or, $key, $to === null ? $fromOrRange : [$fromOrRange, $to]);
     }
 
-    protected function _whereBetween(WhereOperator $operator, string $key, mixed $value): static
+    protected function _whereBetween(WhereOperator $operator, string $key, mixed $value, bool $not = false): static
     {
         return $this->_pushSimpleWhere(
             $operator,
             $key,
-            'BETWEEN',
-            $this->_normalizeBetween($value, 'whereBetween', $key),
+            $not ? 'NOT BETWEEN' : 'BETWEEN',
+            $this->_normalizeBetween($value, $not ? 'whereNotBetween' : 'whereBetween', $key),
         );
     }
 

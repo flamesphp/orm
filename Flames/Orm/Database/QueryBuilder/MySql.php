@@ -31,10 +31,11 @@ class MySql extends DefaultEx
         if ($this->mode === 'model' && isset($this->modelData->column[$key])) {
             $column = $this->modelData->column[$key];
             $value  = match ($condition) {
-                'IN', 'NOT IN', 'BETWEEN' => array_map(
+                'IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN' => array_map(
                     fn (mixed $item): mixed => $this->modelCast::pre($column, $item),
                     (array) $value,
                 ),
+                'IS TRUE', 'IS FALSE', 'IS UNKNOWN', 'IS NOT TRUE', 'IS NOT FALSE', 'IS NOT UNKNOWN' => $value,
                 default => $this->modelCast::pre($column, $value),
             };
         }
@@ -60,6 +61,10 @@ class MySql extends DefaultEx
                 WhereType::Expression   => $this->_whereExpressionPart($where, $data, $whereIndex),
                 WhereType::Column       => $this->_whereColumnPart($where, $data, $whereIndex),
                 WhereType::Bitwise      => $this->_whereBitwisePart($where, $data, $whereIndex),
+                WhereType::Strcmp       => $this->_whereStrcmpPart($where, $data, $whereIndex),
+                WhereType::RegexpLike   => $this->_whereRegexpLikePart($where, $data, $whereIndex),
+                WhereType::JsonPath     => $this->_whereJsonPathPart($where, $data, $whereIndex),
+                WhereType::FullText     => $this->_whereFullTextPart($where, $data, $whereIndex),
             };
             $fragments[] = [$where['operator']->value, $fragment];
         }
@@ -80,9 +85,15 @@ class MySql extends DefaultEx
 
         return match ($w['condition']) {
             'IN', 'NOT IN' => $this->_whereListPart($col, $w, $data, $base, $idx),
-            'BETWEEN'      => $this->_whereBetweenPart($col, $w, $data, $base, $idx),
+            'BETWEEN', 'NOT BETWEEN' => $this->_whereBetweenPart($col, $w, $data, $base, $idx),
             'IS NULL'      => ["$col IS NULL", $data, $idx],
             'IS NOT NULL'  => ["$col IS NOT NULL", $data, $idx],
+            'IS TRUE'      => ["$col IS TRUE", $data, $idx],
+            'IS FALSE'     => ["$col IS FALSE", $data, $idx],
+            'IS UNKNOWN'   => ["$col IS UNKNOWN", $data, $idx],
+            'IS NOT TRUE'  => ["$col IS NOT TRUE", $data, $idx],
+            'IS NOT FALSE' => ["$col IS NOT FALSE", $data, $idx],
+            'IS NOT UNKNOWN' => ["$col IS NOT UNKNOWN", $data, $idx],
             'LIKE'         => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, false, true),
             'NOT LIKE'     => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, true, true),
             'LIKE_PATTERN' => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, false, false),
@@ -121,8 +132,9 @@ class MySql extends DefaultEx
         $toKey       = $base . '_to';
         $data[$fromKey] = $from;
         $data[$toKey]   = $to;
+        $between        = $w['condition'] === 'NOT BETWEEN' ? 'NOT BETWEEN' : 'BETWEEN';
 
-        return ["$col BETWEEN :$fromKey AND :$toKey", $data, $idx + 1];
+        return ["$col $between :$fromKey AND :$toKey", $data, $idx + 1];
     }
 
     private function _whereLikePart(
@@ -162,7 +174,7 @@ class MySql extends DefaultEx
         $data[$base] = $w['value'];
         $type        = $this->_whereColumnType($w['key']);
 
-        if (in_array($type, ['json', 'jsonb'], true)) {
+        if (in_array($type, ['json', 'jsonb'], true) && in_array($w['condition'], ['=', '<=>'], true)) {
             return ['(' . $this->_jsonEqualitySql($col, $base) . ')', $data, ++$idx];
         }
 
@@ -245,8 +257,16 @@ class MySql extends DefaultEx
 
     private function _whereBitwisePart(array $w, array $data, int $idx): array
     {
+        $col = $this->_qualifiedColumn($w['key']);
+
+        if (($w['unary'] ?? false) === true) {
+            $valueKey        = 'where_' . $this->whereBaseIndex . $idx . '_value';
+            $data[$valueKey] = $w['value'];
+
+            return ['((CAST(~' . $col . ' AS SIGNED) ' . $w['condition'] . ' :' . $valueKey . '))', $data, ++$idx];
+        }
+
         $base = 'where_' . $this->whereBaseIndex . $idx . '_operand';
-        $col  = $this->_qualifiedColumn($w['key']);
         $data[$base] = $w['operand'];
 
         $expression = '(' . $col . ' ' . $w['bitOperator'] . ' :' . $base . ')';
@@ -254,6 +274,94 @@ class MySql extends DefaultEx
         $data[$valueKey] = $w['value'];
 
         return [$expression . ' ' . $w['condition'] . ' :' . $valueKey, $data, ++$idx];
+    }
+
+    private function _whereStrcmpPart(array $w, array $data, int $idx): array
+    {
+        $left  = $this->_qualifiedColumn($w['left']);
+        $right = ($w['rightIsValue'] ?? false)
+            ? ':' . ($base = 'where_' . $this->whereBaseIndex . $idx . '_right')
+            : $this->_qualifiedColumn((string) $w['right']);
+
+        if ($w['rightIsValue'] ?? false) {
+            $data[$base] = $w['right'];
+        }
+
+        $compare = $w['condition'] === '=' ? '= 0' : $w['condition'] . ' 0';
+
+        return ['(STRCMP(' . $left . ', ' . $right . ') ' . $compare . ')', $data, ++$idx];
+    }
+
+    private function _whereRegexpLikePart(array $w, array $data, int $idx): array
+    {
+        $col        = $this->_qualifiedColumn($w['key']);
+        $patternKey = 'where_' . $this->whereBaseIndex . $idx . '_pattern';
+        $pattern    = $w['pattern'];
+
+        if ($w['flags'] !== null && $w['flags'] !== '') {
+            if (str_contains((string) $w['flags'], 'i')) {
+                $pattern = '(?i)' . $pattern;
+            }
+        }
+
+        $data[$patternKey] = $pattern;
+        $operator = ($w['not'] ?? false) ? 'NOT REGEXP' : 'REGEXP';
+
+        return ['(' . $col . ' ' . $operator . ' :' . $patternKey . ')', $data, ++$idx];
+    }
+
+    private function _whereJsonPathPart(array $w, array $data, int $idx): array
+    {
+        $col      = $this->_qualifiedColumn($w['key']);
+        $path     = str_starts_with($w['path'], '$') ? $w['path'] : '$.' . ltrim($w['path'], '.');
+        $pathLit  = "'" . str_replace("'", "''", $path) . "'";
+        $valueKey = 'where_' . $this->whereBaseIndex . $idx . '_value';
+        $data[$valueKey] = $w['value'];
+
+        $extract = ($w['unquoted'] ?? false)
+            ? 'JSON_UNQUOTE(JSON_EXTRACT(' . $col . ', ' . $pathLit . '))'
+            : 'JSON_EXTRACT(' . $col . ', ' . $pathLit . ')';
+
+        if (($w['condition'] ?? '=') === '=' && ($w['unquoted'] ?? false) === false) {
+            return ['(' . $extract . ' = CAST(:' . $valueKey . ' AS JSON))', $data, ++$idx];
+        }
+
+        return ['(' . $extract . ' ' . $w['condition'] . ' :' . $valueKey . ')', $data, ++$idx];
+    }
+
+    private function _whereFullTextPart(array $w, array $data, int $idx): array
+    {
+        $terms = $this->_parseFullTextTerms((string) $w['query'], (string) ($w['mode'] ?? 'BOOLEAN'));
+        if ($terms === []) {
+            return ['(1=1)', $data, $idx];
+        }
+
+        $termClauses = [];
+        foreach ($terms as $termIndex => $term) {
+            $columnClauses = [];
+            foreach ($w['columns'] as $colIndex => $column) {
+                $key = 'where_' . $this->whereBaseIndex . $idx . '_ft_' . $termIndex . '_' . $colIndex;
+                $data[$key] = $term;
+                $columnClauses[] = $this->_qualifiedColumn($column) . " LIKE CONCAT('%', :$key, '%')";
+                ++$idx;
+            }
+            $termClauses[] = '(' . implode(' OR ', $columnClauses) . ')';
+        }
+
+        return ['(' . implode(' AND ', $termClauses) . ')', $data, $idx];
+    }
+
+    /** @return list<string> */
+    private function _parseFullTextTerms(string $query, string $mode): array
+    {
+        $query = trim($query);
+        if ($query === '') {
+            return [];
+        }
+
+        preg_match_all('/[\p{L}\p{N}]+/u', $query, $matches);
+
+        return array_values(array_unique($matches[0] ?? []));
     }
 
     // ── ORDER / GROUP (unified helper) ────────────────────────────────────────

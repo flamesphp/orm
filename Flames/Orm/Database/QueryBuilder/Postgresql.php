@@ -141,6 +141,10 @@ class Postgresql extends DefaultEx
                 WhereType::Expression   => $this->_whereExpressionPart($where, $data, $whereIndex),
                 WhereType::Column       => $this->_whereColumnPart($where, $data, $whereIndex),
                 WhereType::Bitwise      => $this->_whereBitwisePart($where, $data, $whereIndex),
+                WhereType::Strcmp       => $this->_whereStrcmpPart($where, $data, $whereIndex),
+                WhereType::RegexpLike   => $this->_whereRegexpLikePart($where, $data, $whereIndex),
+                WhereType::JsonPath     => $this->_whereJsonPathPart($where, $data, $whereIndex),
+                WhereType::FullText     => $this->_whereFullTextPart($where, $data, $whereIndex),
             };
             $fragments[] = [$where['operator']->value, $fragment];
         }
@@ -177,9 +181,15 @@ class Postgresql extends DefaultEx
 
         return match ($w['condition']) {
             'IN', 'NOT IN' => $this->_whereListPart($col, $w, $data, $base, $idx),
-            'BETWEEN'      => $this->_whereBetweenPart($col, $w, $data, $base, $idx),
+            'BETWEEN', 'NOT BETWEEN' => $this->_whereBetweenPart($col, $w, $data, $base, $idx),
             'IS NULL'      => ["$col IS NULL", $data, $idx],
             'IS NOT NULL'  => ["$col IS NOT NULL", $data, $idx],
+            'IS TRUE'      => ["$col IS TRUE", $data, $idx],
+            'IS FALSE'     => ["$col IS FALSE", $data, $idx],
+            'IS UNKNOWN'   => ["$col IS UNKNOWN", $data, $idx],
+            'IS NOT TRUE'  => ["$col IS NOT TRUE", $data, $idx],
+            'IS NOT FALSE' => ["$col IS NOT FALSE", $data, $idx],
+            'IS NOT UNKNOWN' => ["$col IS NOT UNKNOWN", $data, $idx],
             'LIKE'         => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, false, true),
             'NOT LIKE'     => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, true, true),
             'LIKE_PATTERN' => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, false, false),
@@ -219,8 +229,10 @@ class Postgresql extends DefaultEx
         $data[$fromKey] = $this->_prepareBindValue($w['key'], $from);
         $data[$toKey]   = $this->_prepareBindValue($w['key'], $to);
 
+        $between = $w['condition'] === 'NOT BETWEEN' ? 'NOT BETWEEN' : 'BETWEEN';
+
         return [
-            $col . ' BETWEEN '
+            $col . ' ' . $between . ' '
             . $this->_whereParamRef($w['key'], $fromKey, $from)
             . ' AND '
             . $this->_whereParamRef($w['key'], $toKey, $to),
@@ -274,7 +286,27 @@ class Postgresql extends DefaultEx
             return ["$col IS NOT DISTINCT FROM $param", $data, ++$idx];
         }
 
+        $type = $this->_whereColumnType($w['key']);
+        if (in_array($type, ['json', 'jsonb'], true) && in_array($w['condition'], ['=', '<=>'], true)) {
+            return ['(' . $col . '::jsonb = CAST(' . $param . ' AS jsonb))', $data, ++$idx];
+        }
+
         return ["$col {$w['condition']} $param", $data, ++$idx];
+    }
+
+    private function _whereColumnType(string $columnName): ?string
+    {
+        if ($this->mode !== 'model') {
+            return null;
+        }
+
+        foreach ($this->modelData->column as $column) {
+            if ($column->name === $columnName) {
+                return Kinds::normalize($column->type);
+            }
+        }
+
+        return null;
     }
 
     private function _whereRawPart(array $w, array $data, int $idx): array
@@ -334,8 +366,20 @@ class Postgresql extends DefaultEx
 
     private function _whereBitwisePart(array $w, array $data, int $idx): array
     {
+        $col = $this->_qualifiedColumn($w['key']);
+
+        if (($w['unary'] ?? false) === true) {
+            $valueKey        = 'where_' . $this->whereBaseIndex . $idx . '_value';
+            $data[$valueKey] = $this->_prepareBindValue($w['key'], $w['value']);
+
+            return [
+                '((~' . $col . ') ' . $w['condition'] . ' ' . $this->_whereParamRef($w['key'], $valueKey, $w['value']) . ')',
+                $data,
+                ++$idx,
+            ];
+        }
+
         $base = 'where_' . $this->whereBaseIndex . $idx . '_operand';
-        $col  = $this->_qualifiedColumn($w['key']);
         $data[$base] = $this->_prepareBindValue($w['key'], $w['operand']);
 
         $expression = '(' . $col . ' ' . $w['bitOperator'] . ' ' . $this->_whereParamRef($w['key'], $base, $w['operand']) . ')';
@@ -347,6 +391,103 @@ class Postgresql extends DefaultEx
             $data,
             ++$idx,
         ];
+    }
+
+    private function _whereStrcmpPart(array $w, array $data, int $idx): array
+    {
+        $left      = $this->_qualifiedColumn($w['left']);
+        $compareOp = $w['condition'] === '=' ? '=' : $w['condition'];
+
+        if ($w['rightIsValue'] ?? false) {
+            $base        = 'where_' . $this->whereBaseIndex . $idx . '_right';
+            $data[$base] = $this->_prepareBindValue($w['left'], $w['right']);
+            $param       = $this->_whereParamRef($w['left'], $base, $w['right']);
+
+            return ['(' . $left . ' ' . $compareOp . ' ' . $param . ')', $data, ++$idx];
+        }
+
+        $right = $this->_qualifiedColumn((string) $w['right']);
+
+        return ['(' . $left . ' ' . $compareOp . ' ' . $right . ')', $data, ++$idx];
+    }
+
+    private function _whereRegexpLikePart(array $w, array $data, int $idx): array
+    {
+        $col        = $this->_qualifiedColumn($w['key']);
+        $patternKey = 'where_' . $this->whereBaseIndex . $idx . '_pattern';
+        $data[$patternKey] = $this->_prepareBindValue($w['key'], $w['pattern']);
+        $param      = $this->_whereParamRef($w['key'], $patternKey, $w['pattern']);
+        $operator   = ($w['flags'] !== null && str_contains(strtolower($w['flags']), 'i'))
+            ? ($w['not'] ? '!~*' : '~*')
+            : ($w['not'] ? '!~' : '~');
+
+        return ['(' . $col . ' ' . $operator . ' ' . $param . ')', $data, ++$idx];
+    }
+
+    private function _whereJsonPathPart(array $w, array $data, int $idx): array
+    {
+        $col      = $this->_qualifiedColumn($w['key']);
+        $pathLit  = $this->_pgJsonPathLiteral($w['path']);
+        $extract  = ($w['unquoted'] ?? false)
+            ? $col . ' #>> ' . $pathLit
+            : $col . ' #> ' . $pathLit;
+        $valueKey = 'where_' . $this->whereBaseIndex . $idx . '_value';
+
+        if ($w['unquoted'] ?? false) {
+            $data[$valueKey] = $this->_pgJsonPathScalar($w['value']);
+            $param = 'CAST(:' . $valueKey . ' AS text)';
+        } else {
+            $data[$valueKey] = $this->_prepareBindValue($w['key'], $w['value']);
+            $param = $this->_whereParamRef($w['key'], $valueKey, $w['value']);
+        }
+
+        return ['(' . $extract . ' ' . $w['condition'] . ' ' . $param . ')', $data, ++$idx];
+    }
+
+    private function _pgJsonPathScalar(mixed $value): string
+    {
+        return match (true) {
+            is_string($value) => $value,
+            is_bool($value)   => $value ? 'true' : 'false',
+            is_int($value), is_float($value) => (string) $value,
+            default           => json_encode($value, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+        };
+    }
+
+    private function _pgJsonPathLiteral(string $path): string
+    {
+        $path = str_starts_with($path, '$') ? $path : '$.' . ltrim($path, '.');
+        $segments = array_values(array_filter(explode('.', ltrim($path, '$.'))));
+
+        if ($segments === []) {
+            return '\'{}\'';
+        }
+
+        $formatted = implode(',', array_map(
+            static function (string $segment): string {
+                if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $segment) === 1) {
+                    return $segment;
+                }
+
+                return '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $segment) . '"';
+            },
+            $segments,
+        ));
+
+        return '\'{' . $formatted . '}\'';
+    }
+
+    private function _whereFullTextPart(array $w, array $data, int $idx): array
+    {
+        $vectors = implode(' || ', array_map(
+            fn (string $name): string => 'to_tsvector(\'simple\', coalesce(' . $this->_colRef($name) . '::text, \'\'))',
+            $w['columns'],
+        ));
+        $queryKey = 'where_' . $this->whereBaseIndex . $idx . '_query';
+        $data[$queryKey] = $w['query'];
+        $param    = $this->_whereParamRef(null, $queryKey, $w['query']);
+
+        return ['((' . $vectors . ') @@ plainto_tsquery(\'simple\', ' . $param . '))', $data, ++$idx];
     }
 
     // ── ORDER / GROUP (unified helper) ────────────────────────────────────────

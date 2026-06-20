@@ -34,6 +34,10 @@ class Meilisearch extends DefaultEx
             WhereType::Expression => throw new UnsupportedQueryException('whereExpression', self::DRIVER),
             WhereType::Column     => throw new UnsupportedQueryException('whereColumn', self::DRIVER),
             WhereType::Bitwise    => throw new UnsupportedQueryException('whereBitwise', self::DRIVER),
+            WhereType::Strcmp     => throw new UnsupportedQueryException('whereStrcmp', self::DRIVER),
+            WhereType::RegexpLike => throw new UnsupportedQueryException('whereRegexpLike', self::DRIVER),
+            WhereType::JsonPath   => throw new UnsupportedQueryException('whereJsonExtract', self::DRIVER),
+            WhereType::FullText   => throw new UnsupportedQueryException('whereFullText', self::DRIVER),
             default               => null,
         };
 
@@ -50,10 +54,14 @@ class Meilisearch extends DefaultEx
             throw new UnsupportedQueryException('whereLikePattern', self::DRIVER);
         }
 
+        if (in_array($condition, ['IS TRUE', 'IS FALSE', 'IS UNKNOWN', 'IS NOT TRUE', 'IS NOT FALSE', 'IS NOT UNKNOWN'], true)) {
+            throw new UnsupportedQueryException('whereIsTrue', self::DRIVER);
+        }
+
         if ($this->mode === 'model' && isset($this->modelData->column[$key])) {
             $column = $this->modelData->column[$key];
             $value  = match ($condition) {
-                'IN', 'NOT IN', 'BETWEEN' => array_map(
+                'IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN' => array_map(
                     fn (mixed $item): mixed => $this->modelCast::pre($column, $item),
                     (array) $value,
                 ),
@@ -151,6 +159,10 @@ class Meilisearch extends DefaultEx
             WhereType::Expression  => throw new UnsupportedQueryException('whereExpression', self::DRIVER),
             WhereType::Column      => throw new UnsupportedQueryException('whereColumn', self::DRIVER),
             WhereType::Bitwise     => throw new UnsupportedQueryException('whereBitwise', self::DRIVER),
+            WhereType::Strcmp      => throw new UnsupportedQueryException('whereStrcmp', self::DRIVER),
+            WhereType::RegexpLike  => throw new UnsupportedQueryException('whereRegexpLike', self::DRIVER),
+            WhereType::JsonPath    => throw new UnsupportedQueryException('whereJsonExtract', self::DRIVER),
+            WhereType::FullText    => throw new UnsupportedQueryException('whereFullText', self::DRIVER),
         };
     }
 
@@ -162,6 +174,7 @@ class Meilisearch extends DefaultEx
         return match ($where['condition']) {
             'IN', 'NOT IN' => $this->_buildFilterList($key, (array) $value, $where['condition'] === 'NOT IN'),
             'BETWEEN'      => $this->_buildFilterBetween($key, (array) $value),
+            'NOT BETWEEN'  => '(NOT (' . $this->_buildFilterBetween($key, (array) $value) . '))',
             'IS NULL'      => $key . ' IS NULL',
             'IS NOT NULL'  => $key . ' IS NOT NULL',
             'LIKE'         => $key . ' CONTAINS ' . $this->_quoteFilterValue($value),
@@ -186,6 +199,10 @@ class Meilisearch extends DefaultEx
 
     private function _buildCompareCondition(string $key, string $operator, mixed $value): string
     {
+        if ($operator === '<>') {
+            $operator = '!=';
+        }
+
         if ($operator === '=' || $operator === '<=>') {
             if (is_array($value)) {
                 return $this->_buildObjectEqualityFilter($key, $value);

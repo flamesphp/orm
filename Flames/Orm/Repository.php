@@ -103,8 +103,15 @@ abstract class Repository
             'IN'               => self::_linkMethod('WhereIn', $logic),
             'NOT IN'           => self::_linkMethod('WhereNotIn', $logic),
             'BETWEEN'          => self::_linkMethod('WhereBetween', $logic),
+            'NOT BETWEEN'      => self::_linkMethod('WhereNotBetween', $logic),
             'IS NULL'          => self::_linkMethod('WhereNull', $logic),
             'IS NOT NULL'      => self::_linkMethod('WhereNotNull', $logic),
+            'IS TRUE'          => self::_linkMethod('WhereIsTrue', $logic),
+            'IS FALSE'         => self::_linkMethod('WhereIsFalse', $logic),
+            'IS UNKNOWN'       => self::_linkMethod('WhereIsUnknown', $logic),
+            'IS NOT TRUE'      => self::_linkMethod('WhereIsNotTrue', $logic),
+            'IS NOT FALSE'     => self::_linkMethod('WhereIsNotFalse', $logic),
+            'IS NOT UNKNOWN'   => self::_linkMethod('WhereIsNotUnknown', $logic),
             '!=', '<>'         => self::_linkMethod('WhereNot', $logic),
             '<=>'              => self::_linkMethod('WhereSafeEqual', $logic),
             'REGEXP', 'RLIKE'  => self::_linkMethod('WhereRegexp', $logic),
@@ -118,8 +125,13 @@ abstract class Repository
         };
 
         if ($method !== null) {
-            if (in_array($operator, ['IS NULL', 'IS NOT NULL'], true)) {
+            if (in_array($operator, ['IS NULL', 'IS NOT NULL', 'IS TRUE', 'IS FALSE', 'IS UNKNOWN', 'IS NOT TRUE', 'IS NOT FALSE', 'IS NOT UNKNOWN'], true)) {
                 $queryBuilder->{$method}($filter[0]);
+                return;
+            }
+
+            if ($operator === 'BETWEEN' || $operator === 'NOT BETWEEN') {
+                $queryBuilder->{$method}($filter[0], $filter[2][0], $filter[2][1]);
                 return;
             }
 

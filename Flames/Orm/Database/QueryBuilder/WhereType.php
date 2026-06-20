@@ -16,4 +16,8 @@ enum WhereType
     case Expression;
     case Column;
     case Bitwise;
+    case Strcmp;
+    case RegexpLike;
+    case JsonPath;
+    case FullText;
 }
