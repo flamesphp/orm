@@ -1,9 +1,9 @@
 <?php
+declare(strict_types=1);
+
 
 namespace Flames\Orm\Database;
 
-use Flames\Collection\Arr;
-use Flames\Environment;
 use Flames\Orm\Database\Driver\MariaDb;
 use Flames\Orm\Database\Driver\Meilisearch;
 use Flames\Orm\Database\Driver\MySql;

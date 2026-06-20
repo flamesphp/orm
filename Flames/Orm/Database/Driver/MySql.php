@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 
 namespace Flames\Orm\Database\Driver;
 
@@ -125,6 +127,11 @@ class Mysql extends DefaultEx
             if ($column->autoIncrement) { $queries[] = "ALTER TABLE `{$data->table}` MODIFY `{$column->name}` {$column->base} AUTO_INCREMENT;"; }
         }
 
+        array_push(
+            $queries,
+            ...self::__syncCompositeIndexes($data->table, (array) $data->column, (array) ($data->index ?? []), [])
+        );
+
         array_walk($queries, fn($q) => $this->connection->query($q));
 
         $escaped = str_replace('\\', '\\\\', $data->class);
@@ -191,30 +198,13 @@ class Mysql extends DefaultEx
             if ($column->primary && ($dbCol === null || $dbCol['Key'] !== 'PRI')) {
                 $queries[] = "ALTER TABLE `{$data->table}` ADD PRIMARY KEY (`{$column->name}`);";
             }
-
-            if ($column->index) {
-                // PHP 8.4 array_any
-                $exists = array_any(
-                    $dbIndexes,
-                    fn($idx) => $idx['Key_name'] !== 'PRIMARY' && $idx['Column_name'] === $column->name
-                );
-                if (!$exists) {
-                    $queries[] = "ALTER TABLE `{$data->table}` ADD INDEX (`{$column->name}`);";
-                }
-            }
-
-            if ($column->unique) {
-                $exists = array_any(
-                    $dbIndexes,
-                    fn($idx) => $idx['Key_name'] !== 'PRIMARY'
-                             && $idx['Non_unique'] == 0
-                             && $idx['Column_name'] === $column->name
-                );
-                if (!$exists) {
-                    $queries[] = "ALTER TABLE `{$data->table}` ADD UNIQUE (`{$column->name}`);";
-                }
-            }
         }
+
+        array_push($queries, ...self::__syncColumnIndexes($data->table, $columns, $dbIndexes));
+        array_push(
+            $queries,
+            ...self::__syncCompositeIndexes($data->table, $columns, (array) ($data->index ?? []), $dbIndexes)
+        );
 
         array_walk($queries, fn($q) => $this->connection->query($q));
 
@@ -243,18 +233,183 @@ class Mysql extends DefaultEx
         }
     }
 
+    protected static function __syncColumnIndexes(string $table, array $columns, array $dbIndexes): array
+    {
+        $queries = [];
+
+        $expectedByColumn = [];
+        foreach ($columns as $column) {
+            $expectedByColumn[$column->name] = [
+                'index'  => (bool) $column->index,
+                'unique' => (bool) $column->unique,
+            ];
+        }
+
+        $indexGroups = self::__groupDbIndexes($dbIndexes);
+
+        foreach ($indexGroups as $keyName => $index) {
+            if (count($index['columns']) !== 1) {
+                continue;
+            }
+
+            $columnName = reset($index['columns']);
+            if (isset($expectedByColumn[$columnName]) === false) {
+                continue;
+            }
+
+            $expected = $expectedByColumn[$columnName];
+            $isUnique = $index['non_unique'] === 0;
+            $shouldKeep = ($isUnique && $expected['unique']) || ($isUnique === false && $expected['index']);
+
+            if ($shouldKeep === false) {
+                $queries[] = "ALTER TABLE `{$table}` DROP INDEX `{$keyName}`;";
+            }
+        }
+
+        foreach ($columns as $column) {
+            $expected = $expectedByColumn[$column->name];
+
+            if ($expected['index']) {
+                $exists = array_any(
+                    $dbIndexes,
+                    fn($idx) => $idx['Key_name'] !== 'PRIMARY'
+                        && $idx['Column_name'] === $column->name
+                        && (int) $idx['Non_unique'] === 1
+                );
+
+                if ($exists === false) {
+                    $queries[] = "ALTER TABLE `{$table}` ADD INDEX (`{$column->name}`);";
+                }
+            }
+
+            if ($expected['unique']) {
+                $exists = array_any(
+                    $dbIndexes,
+                    fn($idx) => $idx['Key_name'] !== 'PRIMARY'
+                        && $idx['Column_name'] === $column->name
+                        && (int) $idx['Non_unique'] === 0
+                );
+
+                if ($exists === false) {
+                    $queries[] = "ALTER TABLE `{$table}` ADD UNIQUE (`{$column->name}`);";
+                }
+            }
+        }
+
+        return $queries;
+    }
+
+    protected static function __syncCompositeIndexes(string $table, array $columns, array $modelIndexes, array $dbIndexes): array
+    {
+        $queries = [];
+        $modelColumnNames = array_map(static fn($column) => $column->name, $columns);
+
+        $expected = [];
+        foreach ($modelIndexes as $index) {
+            $expected[] = array_values((array) $index->columns);
+        }
+
+        $indexGroups = self::__groupDbIndexes($dbIndexes);
+        $existingComposites = [];
+
+        foreach ($indexGroups as $keyName => $index) {
+            if (count($index['columns']) < 2 || $index['non_unique'] !== 1) {
+                continue;
+            }
+
+            $indexColumns = array_values($index['columns']);
+            if (array_any($indexColumns, static fn($column) => in_array($column, $modelColumnNames, true) === false)) {
+                continue;
+            }
+
+            $existingComposites[$keyName] = $indexColumns;
+        }
+
+        foreach ($existingComposites as $keyName => $indexColumns) {
+            if (self::__indexColumnsInList($indexColumns, $expected) === false) {
+                $queries[] = "ALTER TABLE `{$table}` DROP INDEX `{$keyName}`;";
+            }
+        }
+
+        foreach ($expected as $indexColumns) {
+            $exists = array_any(
+                $existingComposites,
+                static fn($existingColumns) => $existingColumns === $indexColumns
+            );
+
+            if ($exists === false) {
+                $queries[] = self::__addCompositeIndexQuery($table, $indexColumns);
+            }
+        }
+
+        return $queries;
+    }
+
+    protected static function __groupDbIndexes(array $dbIndexes): array
+    {
+        $indexGroups = [];
+
+        foreach ($dbIndexes as $idx) {
+            if ($idx['Key_name'] === 'PRIMARY') {
+                continue;
+            }
+
+            $keyName = $idx['Key_name'];
+            if (isset($indexGroups[$keyName]) === false) {
+                $indexGroups[$keyName] = [
+                    'non_unique' => (int) $idx['Non_unique'],
+                    'columns'    => [],
+                ];
+            }
+
+            $indexGroups[$keyName]['columns'][(int) $idx['Seq_in_index']] = $idx['Column_name'];
+        }
+
+        foreach ($indexGroups as $keyName => $index) {
+            ksort($indexGroups[$keyName]['columns']);
+        }
+
+        return $indexGroups;
+    }
+
+    protected static function __indexColumnsInList(array $columns, array $list): bool
+    {
+        foreach ($list as $expected) {
+            if ($expected === $columns) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected static function __addCompositeIndexQuery(string $table, array $columns): string
+    {
+        $columnSql = implode('`, `', $columns);
+        $name      = self::__compositeIndexName($columns);
+
+        return "ALTER TABLE `{$table}` ADD INDEX `{$name}` (`{$columnSql}`);";
+    }
+
+    protected static function __compositeIndexName(array $columns): string
+    {
+        $name = 'idx_' . implode('_', $columns);
+
+        if (strlen($name) <= 64) {
+            return $name;
+        }
+
+        return 'idx_' . substr(sha1(implode("\0", $columns)), 0, 59);
+    }
+
     protected static function __createColumnBase(Arr $column): string
     {
-        $q = $column->type;
-
-        if ($column->size !== null && in_array($column->type, ['bigint', 'int', 'varchar', 'tinyint'], true)) {
-            $q .= '(' . $column->size . ')';
-        }
+        $q = \Flames\Orm\Database\Type\Kinds::ddlType($column);
 
         return $q . match (true) {
             $column->nullable === false          => ' NOT NULL',
             $column->default  === null           => ' DEFAULT NULL',
-            default                              => " DEFAULT '" . $column->default . "'",
+            default                              => \Flames\Orm\Database\Type\Kinds::ddlDefault($column),
         };
     }
 

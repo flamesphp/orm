@@ -1,6 +1,10 @@
 <?php
+declare(strict_types=1);
+
 
 namespace Flames\Orm\Database\Cast;
+
+use Flames\Orm\Database\Type\Kinds;
 
 /**
  * @internal
@@ -25,17 +29,12 @@ class Meilisearch
             return self::$classCache[$type];
         }
 
-        $normalized = match ($type) {
-            'bool'  => 'BoolEx',
-            'int'   => 'IntEx',
-            'float' => 'FloatEx',
-            default => ucfirst($type),
-        };
-
-        $class = 'Flames\\Orm\\Database\\Cast\\Meilisearch\\' . $normalized;
+        $defaultClass = Kinds::castClass($type);
+        $shortName    = substr($defaultClass, strrpos($defaultClass, '\\') + 1);
+        $class        = 'Flames\\Orm\\Database\\Cast\\Meilisearch\\' . $shortName;
 
         if (!class_exists($class)) {
-            $class = 'Flames\\Orm\\Database\\Cast\\Default\\StringEx';
+            $class = $defaultClass;
         }
 
         return self::$classCache[$type] = $class;

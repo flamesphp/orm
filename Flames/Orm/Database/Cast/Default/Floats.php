@@ -1,8 +1,10 @@
 <?php
+declare(strict_types=1);
 
-namespace Flames\Orm\Database\Cast\Meilisearch;
 
-class FloatEx
+namespace Flames\Orm\Database\Cast\Default;
+
+class Floats
 {
     public static function pre($column, $value): float|null
     {

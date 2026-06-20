@@ -1,6 +1,10 @@
 <?php
+declare(strict_types=1);
+
 
 namespace Flames\Orm\Database\Cast;
+
+use Flames\Orm\Database\Type\Kinds;
 
 /**
  * @internal
@@ -25,19 +29,6 @@ class DefaultEx
             return self::$classCache[$type];
         }
 
-        $normalized = match ($type) {
-            'bool'  => 'BoolEx',
-            'int'   => 'IntEx',
-            'float' => 'FloatEx',
-            default => ucfirst($type),
-        };
-
-        $class = 'Flames\\Orm\\Database\\Cast\\Default\\' . $normalized;
-
-        if (!class_exists($class)) {
-            $class = 'Flames\\Orm\\Database\\Cast\\Default\\StringEx';
-        }
-
-        return self::$classCache[$type] = $class;
+        return self::$classCache[$type] = Kinds::castClass($type);
     }
 }

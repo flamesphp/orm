@@ -1,8 +1,9 @@
 <?php
+declare(strict_types=1);
 
 namespace Flames\Orm\Database\Cast\Default;
 
-class StringEx
+class Binary
 {
     public static function pre($column, $value): string|null
     {
@@ -10,7 +11,11 @@ class StringEx
             return null;
         }
 
-        return (string) $value;
+        if (!is_string($value)) {
+            throw new \InvalidArgumentException('Binary column value must be a string.');
+        }
+
+        return $value;
     }
 
     public static function pos($column, $value): string|null
@@ -19,6 +24,6 @@ class StringEx
             return null;
         }
 
-        return (string) $value;
+        return is_string($value) ? $value : (string) $value;
     }
 }

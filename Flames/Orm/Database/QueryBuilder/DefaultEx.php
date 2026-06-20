@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 
 namespace Flames\Orm\Database\QueryBuilder;
 
@@ -274,12 +276,9 @@ abstract class DefaultEx
         return $data;
     }
 
-    #[\NoDiscard('Use the returned collection — get() returns results, not $this')]
     public function get(): Arr { return Arr(); }
 
-    #[\NoDiscard('Use the returned value — update() returns success bool')]
     public function update(Arr|array $data): bool { return false; }
 
-    #[\NoDiscard('Use the returned value — insert() returns the new ID or primary key')]
     public function insert(Arr|array $data): mixed { return null; }
 }

@@ -1,8 +1,11 @@
 <?php
+declare(strict_types=1);
+
 
 namespace Flames\Orm\Database\QueryBuilder;
 
 use Flames\Collection\Arr;
+use Flames\Orm\Database\Type\Kinds;
 use PDO;
 use Exception;
 
@@ -140,10 +143,36 @@ class MySql extends DefaultEx
 
     private function _selectColumnsSql(): string
     {
+        if ($this->mode === 'model') {
+            $parts = [];
+            foreach ($this->modelData->column as $col) {
+                $expression = Kinds::isSpatial($col->type)
+                    ? 'ST_AsText(`' . $this->table . '`.`' . $col->name . '`)'
+                    : '`' . $this->table . '`.`' . $col->name . '`';
+                $parts[] = $expression . " AS '" . $this->table . '.' . $col->name . "'";
+            }
+
+            return implode(",\r\n", $parts);
+        }
+
         return self::$selectSqlCache[$this->table] ??= implode(",\r\n", array_map(
             fn($col) => '`' . $this->table . '`.`' . $col . "` AS '" . $this->table . '.' . $col . "'",
             $this->_tableColumns()
         ));
+    }
+
+    private function _sqlValueExpression(string $key): string
+    {
+        if ($this->mode !== 'model' || !isset($this->modelData->column[$key])) {
+            return ':' . $key;
+        }
+
+        $column = $this->modelData->column[$key];
+        if (Kinds::isSpatial($column->type)) {
+            return 'ST_GeomFromText(:' . $key . ', ' . (int) ($column->srid ?? 0) . ')';
+        }
+
+        return ':' . $key;
     }
 
     // ── Prepared statement cache ──────────────────────────────────────────────
@@ -216,7 +245,6 @@ class MySql extends DefaultEx
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    #[\NoDiscard('get() returns the result collection')]
     public function get(): Arr
     {
         $data = [];
@@ -226,7 +254,6 @@ class MySql extends DefaultEx
         return $this->mode === 'model' ? $this->_hydrateModels($stmt) : Arr($stmt->fetchAll());
     }
 
-    #[\NoDiscard('update() returns true on success')]
     public function update(Arr|array $data): bool
     {
         $data = $this->mode === 'model' ? $this->_prepareModelData((array)$data) : (array)$data;
@@ -235,7 +262,7 @@ class MySql extends DefaultEx
             throw new Exception("Update payload in table {$this->table} can't be empty.");
         }
 
-        $set   = implode(', ', array_map(fn($k) => '`' . $this->_colName($k) . '` = :' . $k, array_keys($data)));
+        $set   = implode(', ', array_map(fn($k) => '`' . $this->_colName($k) . '` = ' . $this->_sqlValueExpression($k), array_keys($data)));
         $sql   = "UPDATE `{$this->table}` " . $this->_nativeJoin() . " SET $set\r\n";
 
         $where = $this->_nativeWhere($data);
@@ -250,7 +277,6 @@ class MySql extends DefaultEx
         return true;
     }
 
-    #[\NoDiscard('insert() returns the new ID or primary key')]
     public function insert(Arr|array $data): mixed
     {
         $data = $this->mode === 'model' ? $this->_prepareModelData((array)$data) : (array)$data;
@@ -260,7 +286,7 @@ class MySql extends DefaultEx
         }
 
         $cols = implode(', ', array_map(fn($k) => '`' . $this->_colName($k) . '`', array_keys($data)));
-        $vals = implode(', ', array_map(fn($k) => ':' . $k, array_keys($data)));
+        $vals = implode(', ', array_map(fn($k) => $this->_sqlValueExpression($k), array_keys($data)));
 
         $this->_prepare("INSERT INTO `{$this->table}` ($cols) VALUES ($vals);")->execute($data);
 

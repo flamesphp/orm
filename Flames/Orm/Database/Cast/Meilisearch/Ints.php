@@ -1,5 +1,7 @@
 <?php
+declare(strict_types=1);
+
 
 namespace Flames\Orm\Database\Cast\Meilisearch;
 
-class IntEx extends Bigint {}
+class Ints extends Bigint {}

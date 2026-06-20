@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 
 namespace Flames\Orm\Database\QueryBuilder;
 
@@ -77,7 +79,6 @@ class Meilisearch extends DefaultEx
         );
     }
 
-    #[\NoDiscard('Use the returned collection — get() returns results, not $this')]
     public function get(): Arr
     {
         $payload = ['q' => ''];
@@ -127,7 +128,6 @@ class Meilisearch extends DefaultEx
         return Arr($hits);
     }
 
-    #[\NoDiscard('Use the returned value — insert() returns the new primary key')]
     public function insert(Arr|array $data): mixed
     {
         $data = (array)$data;

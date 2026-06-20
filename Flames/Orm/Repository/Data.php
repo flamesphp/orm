@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 
 namespace Flames\Orm\Repository;
 
@@ -62,15 +64,17 @@ class Data
 
         foreach ($reflection->getAttributes() as $attribute) {
             $name = $attribute->getName();
-            if ($name === \Flames\Orm\Database::class) {
-                $args = $attribute->getArguments();
-                if (isset($args['name'])) {
-                    $data->database = $args['name'];
+            if ($name === \Flames\Orm\Attribute\Database::class) {
+                /** @var \Flames\Orm\Attribute\Database $instance */
+                $instance = $attribute->newInstance();
+                if ($instance->name !== null) {
+                    $data->database = $instance->name;
                 }
-            } elseif ($name === \Flames\Orm\Model::class) {
-                $args = $attribute->getArguments();
-                if (isset($args['model'])) {
-                    $data->model = $args['model'];
+            } elseif ($name === \Flames\Orm\Attribute\Model::class) {
+                /** @var \Flames\Orm\Attribute\Model $instance */
+                $instance = $attribute->newInstance();
+                if ($instance->model !== null) {
+                    $data->model = $instance->model;
                 }
             }
         }
