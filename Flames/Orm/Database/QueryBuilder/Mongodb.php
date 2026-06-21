@@ -168,6 +168,8 @@ class Mongodb extends DefaultEx
             $sub->setTable($this->table);
         }
 
+        $sub->_ensureSoftDeleteScope();
+
         ($where['value'])($sub);
         $filter = $sub->_buildFilter($sub->wheres);
 
@@ -234,6 +236,9 @@ class Mongodb extends DefaultEx
     }
 
     /**
+     * Mirror the model primary key into MongoDB `_id`, always as the last field.
+     * Model columns keep metadata order (id first, lifecycle columns last).
+     *
      * @param array<string, mixed> $document
      * @return array<string, mixed>
      */
@@ -243,14 +248,53 @@ class Mongodb extends DefaultEx
             return $document;
         }
 
-        $pkName = $pkColumn->name;
-        if (array_key_exists($pkName, $document) === false) {
+        $pkName  = $pkColumn->name;
+        $pkValue = $document[$pkName] ?? $document['_id'] ?? null;
+
+        if ($pkValue === null) {
             return $document;
         }
 
-        $document['_id'] = $document[$pkName];
+        unset($document['_id']);
 
-        return $document;
+        $ordered = [];
+
+        if ($this->mode === 'model') {
+            foreach ($this->modelData->column as $column) {
+                if ($column->name === '_id') {
+                    continue;
+                }
+
+                if (array_key_exists($column->name, $document)) {
+                    $ordered[$column->name] = $document[$column->name];
+                    continue;
+                }
+
+                if ($column->name === $pkName) {
+                    $ordered[$column->name] = $pkValue;
+                }
+            }
+
+            foreach ($document as $key => $value) {
+                if ($key !== '_id' && array_key_exists($key, $ordered) === false) {
+                    $ordered[$key] = $value;
+                }
+            }
+        } else {
+            foreach ($document as $key => $value) {
+                if ($key !== '_id') {
+                    $ordered[$key] = $value;
+                }
+            }
+
+            if (array_key_exists($pkName, $ordered) === false) {
+                $ordered[$pkName] = $pkValue;
+            }
+        }
+
+        $ordered['_id'] = $pkValue;
+
+        return $ordered;
     }
 
     protected function _fetchDocumentByPrimaryKey(object $pkColumn, mixed $pkValue): ?array
@@ -313,6 +357,8 @@ class Mongodb extends DefaultEx
 
     public function get(): Arr
     {
+        $this->_ensureSoftDeleteScope();
+
         $filter  = $this->_buildFilter($this->wheres);
         $options = [
             'limit' => $this->limit ?? 0,
@@ -378,6 +424,8 @@ class Mongodb extends DefaultEx
 
     public function update(Arr|array $data): bool
     {
+        $this->_ensureSoftDeleteScope();
+
         $data = (array) $data;
 
         if ($this->mode === 'model') {
@@ -400,6 +448,8 @@ class Mongodb extends DefaultEx
         $document[$pkColumn->name] = $this->modelCast::pre($pkColumn, $pkValue);
         $document = $this->_applyPrimaryKeyToDocument($document, $pkColumn);
 
+        $targetIds = $this->_resolveModifiedIdsForDocumentMutation();
+
         $bulk = new BulkWrite(['ordered' => true]);
         $bulk->update(
             ['_id' => $document['_id'] ?? $document[$pkColumn->name]],
@@ -408,7 +458,7 @@ class Mongodb extends DefaultEx
         );
         $this->_executeBulkWrite($bulk);
 
-        return true;
+        return $this->_finalizeUpdate(true, $targetIds);
     }
 
     public function insert(Arr|array $data): mixed
@@ -506,5 +556,56 @@ class Mongodb extends DefaultEx
             substr($hex, 16, 4),
             substr($hex, 20, 12),
         );
+    }
+
+    protected function _executeSoftDelete(): int
+    {
+        $property = $this->_softDeleteColumnProperty();
+        $column   = $this->modelData->column[$property];
+        $filter   = $this->_buildFilter($this->wheres);
+
+        if ($filter === []) {
+            throw new Exception('MongoDB soft delete requires where conditions.');
+        }
+
+        $bulk = new BulkWrite(['ordered' => true]);
+        $bulk->update(
+            $filter,
+            ['$set' => [$column->name => $this->modelCast::pre($column, $this->_softDeleteTimestamp())]],
+            ['multi' => true],
+        );
+
+        $result = $this->connection->getManager()->executeBulkWrite(
+            $this->connection->getNamespace($this->table),
+            $bulk,
+        );
+
+        return $result->getModifiedCount();
+    }
+
+    protected function _executeHardDelete(?Arr $preResolvedIds = null): int
+    {
+        $filter = $this->_buildFilter($this->wheres);
+
+        if ($filter === []) {
+            throw new Exception('MongoDB delete requires where conditions.');
+        }
+
+        $this->pendingModifiedIds = $preResolvedIds ?? $this->_resolveModifiedIdsForDocumentMutation();
+
+        $options = [];
+        if ($this->limit !== null) {
+            $options['limit'] = $this->limit;
+        }
+
+        $bulk = new BulkWrite(['ordered' => true]);
+        $bulk->delete($filter, $options);
+
+        $result = $this->connection->getManager()->executeBulkWrite(
+            $this->connection->getNamespace($this->table),
+            $bulk,
+        );
+
+        return $result->getDeletedCount();
     }
 }

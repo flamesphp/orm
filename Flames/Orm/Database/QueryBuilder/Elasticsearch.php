@@ -214,6 +214,8 @@ class Elasticsearch extends DefaultEx
             $sub->setTable($this->table);
         }
 
+        $sub->_ensureSoftDeleteScope();
+
         return $sub;
     }
 
@@ -368,6 +370,8 @@ class Elasticsearch extends DefaultEx
 
     public function get(): Arr
     {
+        $this->_ensureSoftDeleteScope();
+
         $payload = [
             'query' => $this->_buildSearchQuery($this->wheres),
             'size'  => $this->limit ?? 10000,
@@ -423,6 +427,8 @@ class Elasticsearch extends DefaultEx
 
     public function update(Arr|array $data): bool
     {
+        $this->_ensureSoftDeleteScope();
+
         $data = (array) $data;
 
         if ($this->mode === 'model') {
@@ -445,9 +451,11 @@ class Elasticsearch extends DefaultEx
         $document = $existing !== null ? array_merge($existing, $partial) : $partial;
         $document[$pkColumn->name] = $this->modelCast::pre($pkColumn, $pkValue);
 
+        $targetIds = $this->_resolveModifiedIdsForDocumentMutation();
+
         $this->_indexDocument((string) $document[$pkColumn->name], $document);
 
-        return true;
+        return $this->_finalizeUpdate(true, $targetIds);
     }
 
     public function insert(Arr|array $data): mixed
@@ -483,16 +491,16 @@ class Elasticsearch extends DefaultEx
         $this->_indexDocument($documentId, $document);
 
         if ($pkColumn === null) {
-            return $document;
+            return $this->_finalizeInsertResult($document);
         }
 
-        return [
+        return $this->_finalizeInsertResult([
             $primaryKeyProperty => $this->modelCast::pos(
                 $pkColumn,
                 $document[$pkColumn->name] ?? $data[$primaryKeyProperty],
                 true,
             ),
-        ];
+        ]);
     }
 
     protected function _stripNullIdentityColumns(array $data): array
@@ -530,5 +538,53 @@ class Elasticsearch extends DefaultEx
             substr($hex, 16, 4),
             substr($hex, 20, 12),
         );
+    }
+
+    protected function _executeSoftDelete(): int
+    {
+        $property = $this->_softDeleteColumnProperty();
+        $column   = $this->modelData->column[$property];
+        $value    = $this->modelCast::pre($column, $this->_softDeleteTimestamp());
+
+        $response = $this->client->request(
+            'POST',
+            $this->table . '/_update_by_query',
+            [
+                'headers' => ['Content-Type' => 'application/json'],
+                'query'   => ['refresh' => 'true'],
+                'body'    => json_encode([
+                    'query' => $this->_buildSearchQuery($this->wheres),
+                    'script' => [
+                        'source' => 'ctx._source.' . $column->name . ' = params.deletedAt',
+                        'params' => ['deletedAt' => $value],
+                    ],
+                ], JSON_THROW_ON_ERROR),
+            ],
+        );
+
+        $payload = json_decode($response->getBody()->getContents(), true);
+
+        return (int) ($payload['updated'] ?? 0);
+    }
+
+    protected function _executeHardDelete(?Arr $preResolvedIds = null): int
+    {
+        $this->pendingModifiedIds = $preResolvedIds ?? $this->_resolveModifiedIdsForDocumentMutation();
+
+        $response = $this->client->request(
+            'POST',
+            $this->table . '/_delete_by_query',
+            [
+                'headers' => ['Content-Type' => 'application/json'],
+                'query'   => ['refresh' => 'true'],
+                'body'    => json_encode([
+                    'query' => $this->_buildSearchQuery($this->wheres),
+                ], JSON_THROW_ON_ERROR),
+            ],
+        );
+
+        $payload = json_decode($response->getBody()->getContents(), true);
+
+        return (int) ($payload['deleted'] ?? 0);
     }
 }

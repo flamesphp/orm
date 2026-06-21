@@ -11,7 +11,7 @@ use Flames\Collection\Arr;
  */
 class Data
 {
-    private const __VERSION__ = 19;
+    private const __VERSION__ = 23;
 
     private static array $runtimeCache = [];
 
@@ -196,6 +196,8 @@ class Data
             $data->column[$propName] = $column;
         }
 
+        $data->column = self::__sortLifecycleColumnsLast($data->column);
+
         $hasPrimary = false;
         foreach ($data->column as $column) {
             if ($column->primary === true) {
@@ -229,6 +231,81 @@ class Data
             $data->index[] = Arr(['columns' => $resolved]);
         }
 
+        $data->usesSoftDeletes  = self::__usesTrait($reflection, \Flames\Orm\Model\Concerns\SoftDeletes::class);
+        $data->usesTimestamps   = self::__usesTrait($reflection, \Flames\Orm\Model\Concerns\Timestamps::class);
+        $data->softDeleteColumn = self::__modelConstant($class, 'DELETED_AT', 'deletedAt');
+        $data->createdAtColumn  = self::__modelConstant($class, 'CREATED_AT', 'createdAt');
+        $data->updatedAtColumn  = self::__modelConstant($class, 'UPDATED_AT', 'updatedAt');
+
         return $data;
+    }
+
+    private static function __usesTrait(\ReflectionClass $reflection, string $trait): bool
+    {
+        return in_array($trait, self::__allTraits($reflection->getName()), true);
+    }
+
+    /**
+     * Lifecycle columns always appear last: createdAt, updatedAt, deletedAt.
+     */
+    private static function __sortLifecycleColumnsLast(Arr $columns): Arr
+    {
+        $lifecycleOrder = ['createdAt', 'updatedAt', 'deletedAt'];
+        $lifecycle      = [];
+        $sorted         = Arr();
+
+        foreach ($columns as $property => $column) {
+            if (in_array($property, $lifecycleOrder, true)) {
+                $lifecycle[$property] = $column;
+                continue;
+            }
+
+            $sorted[$property] = $column;
+        }
+
+        foreach ($lifecycleOrder as $property) {
+            if (isset($lifecycle[$property])) {
+                $sorted[$property] = $lifecycle[$property];
+            }
+        }
+
+        return $sorted;
+    }
+
+    private static function __modelConstant(string $class, string $constant, string $default): string
+    {
+        if (defined($class . '::' . $constant)) {
+            return (string) constant($class . '::' . $constant);
+        }
+
+        return $default;
+    }
+
+    /**
+     * @return list<class-string>
+     */
+    private static function __allTraits(string $class): array
+    {
+        $traits = [];
+
+        do {
+            $traits = array_merge($traits, self::__traitUsesRecursive($class));
+        } while (($class = get_parent_class($class)) !== false);
+
+        return array_values(array_unique($traits));
+    }
+
+    /**
+     * @return list<class-string>
+     */
+    private static function __traitUsesRecursive(string $class): array
+    {
+        $traits = class_uses($class) ?: [];
+
+        foreach (array_keys($traits) as $trait) {
+            $traits = array_merge($traits, self::__traitUsesRecursive($trait));
+        }
+
+        return $traits;
     }
 }

@@ -156,7 +156,90 @@ class Sqlite extends MySql
             $this->connection->exec("ALTER TABLE `{$data->table}` DROP COLUMN `{$col}`;");
         }
 
+        $this->__ensureColumnOrder($data);
+
         $this->_syncMigrationRecord($data->class, $hash);
+    }
+
+    protected function __ensureColumnOrder(object $data): void
+    {
+        try {
+            $currentCols = array_column(
+                $this->connection->query('PRAGMA table_info(`' . $data->table . '`);')->fetchAll(),
+                'name',
+            );
+        } catch (\PDOException) {
+            return;
+        }
+
+        $modelCols = $this->__modelColumnNames($data);
+
+        if ($currentCols === $modelCols || $this->__sameColumnSet($currentCols, $modelCols) === false) {
+            return;
+        }
+
+        $this->__reorderTableColumns($data);
+    }
+
+    protected function __reorderTableColumns(object $data): void
+    {
+        $table   = $data->table;
+        $temp    = $table . '_flames_reorder';
+        $columns = (array) $data->column;
+        $defs    = [];
+        $inlinePrimary = null;
+        $primaryKeys   = [];
+
+        foreach ($columns as $column) {
+            if (
+                $column->primary === true
+                && $column->autoIncrement === true
+                && Kinds::isNumericAutoIncrementType($column)
+            ) {
+                $inlinePrimary = $column->name;
+                $defs[] = "\t`{$column->name}` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL";
+                continue;
+            }
+
+            $defs[] = "\t`{$column->name}` " . static::__createColumnBase($column);
+
+            if ($column->primary === true) {
+                $primaryKeys[] = $column->name;
+            }
+        }
+
+        $primaryKeys = array_values(array_filter(
+            $primaryKeys,
+            static fn (string $name): bool => $name !== $inlinePrimary,
+        ));
+
+        if ($primaryKeys !== []) {
+            $defs[] = "\tPRIMARY KEY (`" . implode('`, `', $primaryKeys) . '`)';
+        }
+
+        $colList = implode(', ', array_map(static fn ($column) => "`{$column->name}`", $columns));
+
+        $this->connection->exec('BEGIN;');
+        $this->connection->exec('DROP TABLE IF EXISTS `' . $temp . '`;');
+        $this->connection->exec('CREATE TABLE `' . $temp . "` (\n" . implode(",\n", $defs) . "\n);");
+        $this->connection->exec(
+            'INSERT INTO `' . $temp . '` (' . $colList . ') SELECT ' . $colList . ' FROM `' . $table . '`;',
+        );
+        $this->connection->exec('DROP TABLE `' . $table . '`;');
+        $this->connection->exec('ALTER TABLE `' . $temp . '` RENAME TO `' . $table . '`;');
+
+        $indexQueries = [];
+        array_push(
+            $indexQueries,
+            ...self::__syncColumnIndexes($table, $columns, []),
+            ...self::__syncCompositeIndexes($table, $columns, (array) ($data->index ?? []), []),
+        );
+
+        foreach ($indexQueries as $query) {
+            $this->connection->exec($query);
+        }
+
+        $this->connection->exec('COMMIT;');
     }
 
     private function _syncMigrationRecord(string $class, string $hash): void

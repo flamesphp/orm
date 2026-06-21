@@ -7,6 +7,7 @@ namespace Flames\Orm\Database\QueryBuilder;
 use Flames\Collection\Arr;
 use Flames\Orm\Database\QueryBuilder\Support\ExtendedOperators;
 use Flames\Orm\Database\QueryBuilder\Support\WhereOperators;
+use Flames\Orm\Repository;
 use Exception;
 
 /**
@@ -695,6 +696,13 @@ abstract class DefaultEx
         return $this;
     }
 
+    public function suppressModifiedIdsTracking(): static
+    {
+        $this->trackModifiedIds = false;
+
+        return $this;
+    }
+
     public function paginate(int $limit, int $page): static
     {
         $this->limit  = $limit;
@@ -793,6 +801,287 @@ abstract class DefaultEx
         return $driverIdentity;
     }
 
+    protected function _finalizeInsertResult(mixed $result): mixed
+    {
+        if ($this->mode !== 'model' || $this->model === null) {
+            return $result;
+        }
+
+        $id = $this->_extractPrimaryKeyFromInsertResult($result);
+
+        if ($id !== null) {
+            Repository::rememberLastInsertId($this->model, $id);
+        }
+
+        return $result;
+    }
+
+    protected function _extractPrimaryKeyFromInsertResult(mixed $result): mixed
+    {
+        if ($result instanceof Arr) {
+            $result = $result->toArray();
+        }
+
+        if (is_int($result) || $result instanceof \Flames\Collection\Uuid) {
+            return $result;
+        }
+
+        if (is_array($result) === false) {
+            return null;
+        }
+
+        $pkColumn = $this->_primaryKeyColumn();
+        if ($pkColumn === null) {
+            return null;
+        }
+
+        $property = $pkColumn->property;
+
+        if (array_key_exists($property, $result)) {
+            $value = $result[$property];
+
+            return is_int($value) || $value instanceof \Flames\Collection\Uuid ? $value : null;
+        }
+
+        if (count($result) === 1) {
+            $value = reset($result);
+
+            return is_int($value) || $value instanceof \Flames\Collection\Uuid ? $value : null;
+        }
+
+        return null;
+    }
+
+    protected function _returningPrimaryKeyColumnName(): ?string
+    {
+        $pkColumn = $this->_primaryKeyColumn();
+
+        return $pkColumn?->name;
+    }
+
+    protected function _driverSupportsReturning(): bool
+    {
+        return false;
+    }
+
+    protected function _castResolvedModifiedId(mixed $value, object $pkColumn): int|\Flames\Collection\Uuid|null
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $casted = $this->modelCast::pos($pkColumn, $value, true);
+
+        return is_int($casted) || $casted instanceof \Flames\Collection\Uuid ? $casted : null;
+    }
+
+    /**
+     * Resolve affected PKs from simple AND wheres without hitting the database.
+     * Returns null when the mutation scope cannot be inferred safely.
+     */
+    protected function _resolveModifiedIdsFromWheres(): ?Arr
+    {
+        if ($this->mode !== 'model' || $this->model === null || $this->trackModifiedIds === false) {
+            return Arr();
+        }
+
+        $pkColumn = $this->_primaryKeyColumn();
+        if ($pkColumn === null) {
+            return null;
+        }
+
+        $property = $pkColumn->property;
+        $ids      = [];
+
+        foreach ($this->wheres as $where) {
+            if ($where['operator'] !== WhereOperator::And) {
+                return null;
+            }
+
+            if ($where['type'] !== WhereType::Simple) {
+                continue;
+            }
+
+            if ($where['key'] !== $property) {
+                continue;
+            }
+
+            if (in_array($where['condition'], ['=', '<=>'], true)) {
+                $id = $this->_castResolvedModifiedId($where['value'], $pkColumn);
+                if ($id !== null) {
+                    $ids[] = $id;
+                }
+                continue;
+            }
+
+            if ($where['condition'] === 'IN') {
+                foreach ((array) $where['value'] as $value) {
+                    $id = $this->_castResolvedModifiedId($value, $pkColumn);
+                    if ($id !== null) {
+                        $ids[] = $id;
+                    }
+                }
+                continue;
+            }
+
+            return null;
+        }
+
+        if ($ids === []) {
+            return null;
+        }
+
+        $unique = [];
+        foreach ($ids as $id) {
+            $unique[$id instanceof \Flames\Collection\Uuid ? (string) $id : (string) $id] = $id;
+        }
+
+        $resolved = Arr(array_values($unique));
+
+        if ($this->limit !== null && $resolved->count > $this->limit) {
+            return Arr(array_slice($resolved->toArray(), 0, $this->limit));
+        }
+
+        return $resolved;
+    }
+
+    protected function _readModifiedIdsFromStatement(\PDOStatement $stmt): Arr
+    {
+        $pkColumn = $this->_primaryKeyColumn();
+        if ($pkColumn === null) {
+            return Arr();
+        }
+
+        $columnName = $pkColumn->name;
+        $ids        = Arr();
+
+        while ($row = $stmt->fetch(\PDO::FETCH_ASSOC)) {
+            $value = $row[$columnName] ?? (count($row) === 1 ? reset($row) : null);
+            $id    = $this->_castResolvedModifiedId($value, $pkColumn);
+
+            if ($id !== null) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
+    }
+
+    protected function _resolveModifiedIdsAfterMutation(?Arr $preResolved, \PDOStatement $stmt, bool $usedReturning): Arr
+    {
+        if ($preResolved !== null) {
+            return $preResolved;
+        }
+
+        if ($this->trackModifiedIds === false || $this->mode !== 'model') {
+            return Arr();
+        }
+
+        if ($usedReturning) {
+            return $this->_readModifiedIdsFromStatement($stmt);
+        }
+
+        return $this->_collectUpdateTargetIdsViaQuery();
+    }
+
+    protected function _resolveModifiedIdsForDocumentMutation(): Arr
+    {
+        if ($this->trackModifiedIds === false || $this->mode !== 'model') {
+            return Arr();
+        }
+
+        $fromWheres = $this->_resolveModifiedIdsFromWheres();
+        if ($fromWheres !== null) {
+            return $fromWheres;
+        }
+
+        $pkColumn = $this->_primaryKeyColumn();
+        if ($pkColumn === null) {
+            return $this->_collectUpdateTargetIdsViaQuery();
+        }
+
+        try {
+            return Arr([$this->modelCast::pos($pkColumn, $this->_resolveWherePrimaryKeyValue(), true)]);
+        } catch (\Throwable) {
+            return $this->_collectUpdateTargetIdsViaQuery();
+        }
+    }
+
+    protected function _duplicateQueryForIdCollection(): static
+    {
+        $query = new static($this->connection);
+
+        if ($this->mode === 'model' && $this->model !== null) {
+            $query->setModel($this->model);
+        } else {
+            $query->setTable((string) $this->table);
+        }
+
+        $query->wheres                 = $this->wheres;
+        $query->whereBaseIndex         = $this->whereBaseIndex;
+        $query->orders                 = $this->orders;
+        $query->groups                 = $this->groups;
+        $query->limit                  = $this->limit;
+        $query->offset                 = $this->offset;
+        $query->includeTrashed         = $this->includeTrashed;
+        $query->softDeleteScopeApplied = $this->softDeleteScopeApplied;
+
+        if ($query->softDeleteScopeApplied === false) {
+            $query->_ensureSoftDeleteScope();
+        }
+
+        return $query;
+    }
+
+    protected function _collectUpdateTargetIdsViaQuery(): Arr
+    {
+        if ($this->mode !== 'model' || $this->model === null) {
+            return Arr();
+        }
+
+        $pkColumn = $this->_primaryKeyColumn();
+        if ($pkColumn === null) {
+            return Arr();
+        }
+
+        $property = $pkColumn->property;
+        $ids      = Arr();
+
+        foreach ($this->_duplicateQueryForIdCollection()->get() as $row) {
+            $id = $row->{$property};
+
+            if ($id !== null && (is_int($id) || $id instanceof \Flames\Collection\Uuid)) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
+    }
+
+    /** @deprecated internal alias */
+    protected function _collectUpdateTargetIds(): Arr
+    {
+        return $this->_collectUpdateTargetIdsViaQuery();
+    }
+
+    protected function _rememberModifiedIds(Arr $ids): void
+    {
+        if ($this->mode !== 'model' || $this->model === null || $this->trackModifiedIds === false) {
+            return;
+        }
+
+        Repository::rememberModifiedIds($this->model, $ids);
+    }
+
+    protected function _finalizeUpdate(bool $result, Arr $targetIds): bool
+    {
+        if ($result) {
+            $this->_rememberModifiedIds($targetIds);
+        }
+
+        return $result;
+    }
+
     protected const UUID_INSERT_MAX_ATTEMPTS = 5;
 
     /**
@@ -807,18 +1096,18 @@ abstract class DefaultEx
         }
 
         if ($this->_usesUuidPrimaryKey() === false) {
-            return $attemptInsert($this->_prepareInsertPayload($data));
+            return $this->_finalizeInsertResult($attemptInsert($this->_prepareInsertPayload($data)));
         }
 
         $pkColumn   = $this->_primaryKeyColumn();
         $pkProperty = $pkColumn?->property;
 
         if ($pkProperty === null) {
-            return $attemptInsert($this->_prepareInsertPayload($data));
+            return $this->_finalizeInsertResult($attemptInsert($this->_prepareInsertPayload($data)));
         }
 
         if ($this->_insertPayloadHasExplicitPrimaryKey($data, $pkProperty)) {
-            return $attemptInsert($this->_prepareInsertPayload($data));
+            return $this->_finalizeInsertResult($attemptInsert($this->_prepareInsertPayload($data)));
         }
 
         $lastException = null;
@@ -833,7 +1122,7 @@ abstract class DefaultEx
             }
 
             try {
-                return $attemptInsert($payload);
+                return $this->_finalizeInsertResult($attemptInsert($payload));
             } catch (\Throwable $exception) {
                 $lastException = $exception;
 
@@ -974,6 +1263,82 @@ abstract class DefaultEx
     protected function _stripNullIdentityColumns(array $data): array
     {
         return $data;
+    }
+
+    protected bool $includeTrashed         = false;
+    protected bool $softDeleteScopeApplied = false;
+    protected bool $trackModifiedIds       = true;
+
+    /** @var Arr|null filled by SQL drivers when DELETE/UPDATE uses RETURNING */
+    protected ?Arr $pendingModifiedIds = null;
+
+    public function withTrashed(): static
+    {
+        $this->includeTrashed = true;
+
+        return $this;
+    }
+
+    protected function _usesSoftDeletes(): bool
+    {
+        return $this->mode === 'model'
+            && ($this->modelData->usesSoftDeletes ?? false) === true;
+    }
+
+    protected function _softDeleteColumnProperty(): string
+    {
+        return (string) ($this->modelData->softDeleteColumn ?? 'deletedAt');
+    }
+
+    protected function _ensureSoftDeleteScope(): void
+    {
+        if ($this->softDeleteScopeApplied || $this->includeTrashed || !$this->_usesSoftDeletes()) {
+            return;
+        }
+
+        $this->whereNull($this->_softDeleteColumnProperty());
+        $this->softDeleteScopeApplied = true;
+    }
+
+    protected function _softDeleteTimestamp(): \Flames\Date\DateTimeImmutable
+    {
+        return \Flames\Date\DateTimeImmutable::now();
+    }
+
+    public function delete(): int
+    {
+        $this->_ensureSoftDeleteScope();
+
+        if ($this->_usesSoftDeletes()) {
+            $previousTrack = $this->trackModifiedIds;
+            $this->trackModifiedIds = false;
+
+            try {
+                return $this->_executeSoftDelete();
+            } finally {
+                $this->trackModifiedIds = $previousTrack;
+            }
+        }
+
+        $preResolved = $this->_resolveModifiedIdsFromWheres();
+        $result      = $this->_executeHardDelete($preResolved);
+        $targetIds   = $preResolved ?? $this->pendingModifiedIds ?? $this->_collectUpdateTargetIdsViaQuery();
+        $this->pendingModifiedIds = null;
+        $this->_rememberModifiedIds($targetIds);
+
+        return $result;
+    }
+
+    protected function _executeSoftDelete(): int
+    {
+        return $this->update([
+            $this->_softDeleteColumnProperty() => $this->_softDeleteTimestamp(),
+        ]) ? 1 : 0;
+    }
+
+    protected function _executeHardDelete(?Arr $preResolvedIds = null): int
+    {
+        return 0;
     }
 
     public function get(): Arr { return Arr(); }

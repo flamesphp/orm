@@ -12,6 +12,11 @@ class Sqlite extends MySql
 {
     private const DRIVER = 'sqlite';
 
+    protected function _driverSupportsReturning(): bool
+    {
+        return true;
+    }
+
     /**
      * @param list<array{0: string, 1: string}> $fragments
      */

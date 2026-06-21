@@ -126,6 +126,8 @@ class Postgresql extends DefaultEx
 
     protected function _nativeWhere(array $data): array
     {
+        $this->_ensureSoftDeleteScope();
+
         if (empty($this->wheres)) {
             return ['data' => $data, 'query' => ''];
         }
@@ -905,8 +907,83 @@ class Postgresql extends DefaultEx
         $data  = $where['data'];
         if ($where['query'] !== '') { $sql .= "\r\nWHERE\r\n" . $where['query']; }
 
-        $this->_prepare($sql)->execute($data);
+        $preResolved   = $this->_resolveModifiedIdsFromWheres();
+        $returningCol  = $preResolved === null && $this->trackModifiedIds && $this->mode === 'model'
+            ? $this->_identityColumnName()
+            : null;
+        $usedReturning = $returningCol !== null;
+
+        if ($usedReturning) {
+            $sql .= ' RETURNING ' . $this->_q($returningCol);
+        }
+
+        $stmt = $this->_prepare($sql . ';');
+        $stmt->execute($data);
+
+        return $this->_finalizeUpdate(true, $this->_resolveModifiedIdsAfterMutation($preResolved, $stmt, $usedReturning));
+    }
+
+    protected function _driverSupportsReturning(): bool
+    {
         return true;
+    }
+
+    protected function _executeSoftDelete(): int
+    {
+        $data = $this->mode === 'model'
+            ? $this->_prepareModelData([$this->_softDeleteColumnProperty() => $this->_softDeleteTimestamp()])
+            : [$this->_softDeleteColumnProperty() => $this->_softDeleteTimestamp()];
+
+        if ($data === []) {
+            throw new Exception("Soft delete payload in table {$this->table} can't be empty.");
+        }
+
+        $set = implode(', ', array_map(
+            fn($k) => $this->_q($this->_colName($k)) . ' = ' . $this->_sqlValueExpression($k),
+            array_keys($data),
+        ));
+        $sql = 'UPDATE ' . $this->_tableRef() . ' ' . $this->_nativeJoin() . " SET $set\r\n";
+
+        $where = $this->_nativeWhere($data);
+        $data  = $where['data'];
+        if ($where['query'] !== '') {
+            $sql .= "\r\nWHERE\r\n" . $where['query'];
+        }
+
+        $stmt = $this->_prepare($sql);
+        $stmt->execute($data);
+
+        return $stmt->rowCount();
+    }
+
+    protected function _executeHardDelete(?Arr $preResolvedIds = null): int
+    {
+        $data = [];
+        $sql  = 'DELETE FROM ' . $this->_tableRef() . ' ' . $this->_nativeJoin();
+
+        $where = $this->_nativeWhere($data);
+        $data  = $where['data'];
+        if ($where['query'] !== '') {
+            $sql .= "\r\nWHERE\r\n" . $where['query'];
+        }
+
+        $returningCol  = $preResolvedIds === null && $this->trackModifiedIds && $this->mode === 'model'
+            ? $this->_identityColumnName()
+            : null;
+        $usedReturning = $returningCol !== null;
+
+        if ($usedReturning) {
+            $sql .= ' RETURNING ' . $this->_q($returningCol);
+        }
+
+        $stmt = $this->_prepare($sql . ';');
+        $stmt->execute($data);
+
+        if ($usedReturning) {
+            $this->pendingModifiedIds = $this->_readModifiedIdsFromStatement($stmt);
+        }
+
+        return $stmt->rowCount();
     }
 
     public function insert(Arr|array $data): mixed

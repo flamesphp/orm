@@ -42,10 +42,7 @@ class Postgresql extends DefaultEx
             return true;
         }
 
-        $hash = ROOT_PATH . str_replace('\\', '/', $data->class) . '.php'
-            |> filemtime(...)
-            |> strval(...)
-            |> sha1(...);
+        $hash = $this->__migrationHash($data);
 
         if (empty($this->tablesMigrations)) {
             try {
@@ -91,6 +88,7 @@ class Postgresql extends DefaultEx
         }
 
         if (isset($this->tablesMigrations[$data->class]) && $this->tablesMigrations[$data->class] === $hash) {
+            $this->__ensureColumnOrder($data);
             $this->tableUpdated[$data->class] = true;
             return true;
         }
@@ -242,6 +240,8 @@ class Postgresql extends DefaultEx
                 'ALTER TABLE ' . self::_q($data->table) . ' DROP COLUMN ' . self::_q($col) . ';'
             )
         );
+
+        $this->__ensureColumnOrder($data);
 
         $escaped = str_replace('\\', '\\\\', $data->class);
         $exists  = !empty(
@@ -670,6 +670,96 @@ class Postgresql extends DefaultEx
     {
         if (!preg_match('/^[a-z][a-z0-9_]*$/', $name)) {
             throw new \InvalidArgumentException('Invalid PostgreSQL extension name: ' . $name);
+        }
+    }
+
+    protected function __ensureColumnOrder(object $data): void
+    {
+        try {
+            $currentCols = array_keys($this->__fetchDbColumns($data->table));
+        } catch (\PDOException) {
+            return;
+        }
+
+        $modelCols = $this->__modelColumnNames($data);
+
+        if ($currentCols === $modelCols || $this->__sameColumnSet($currentCols, $modelCols) === false) {
+            return;
+        }
+
+        $this->__reorderTableColumns($data);
+    }
+
+    protected function __reorderTableColumns(object $data): void
+    {
+        $table   = $data->table;
+        $temp    = $table . '_flames_reorder';
+        $columns = (array) $data->column;
+        $colDefs = [];
+        $pkCols  = [];
+
+        foreach ($columns as $column) {
+            $column->base = static::__createColumnBase($column);
+            $colDefs[]    = self::_q($column->name) . ' ' . $column->base;
+
+            if ($column->primary) {
+                $pkCols[] = self::_q($column->name);
+            }
+        }
+
+        $pkSql = $pkCols !== []
+            ? ', PRIMARY KEY (' . implode(', ', $pkCols) . ')'
+            : '';
+
+        $colList = implode(', ', array_map(static fn($column) => self::_q($column->name), $columns));
+
+        $this->connection->beginTransaction();
+
+        try {
+            $this->connection->query('DROP TABLE IF EXISTS ' . self::_q($temp) . ';');
+            $this->connection->query(
+                'CREATE TABLE ' . self::_q($temp) . ' (' . implode(', ', $colDefs) . $pkSql . ');'
+            );
+            $this->connection->query(
+                'INSERT INTO ' . self::_q($temp) . ' (' . $colList . ') '
+                . 'SELECT ' . $colList . ' FROM ' . self::_q($table) . ';'
+            );
+            $this->connection->query('DROP TABLE ' . self::_q($table) . ';');
+            $this->connection->query(
+                'ALTER TABLE ' . self::_q($temp) . ' RENAME TO ' . self::_q($table) . ';'
+            );
+
+            foreach ($columns as $column) {
+                if ($column->autoIncrement === false) {
+                    continue;
+                }
+
+                $escapedTable  = str_replace("'", "''", $table);
+                $escapedColumn = str_replace("'", "''", $column->name);
+                $qTable        = self::_q($table);
+                $qCol          = self::_q($column->name);
+                $this->connection->query(
+                    'SELECT setval('
+                    . "pg_get_serial_sequence('{$escapedTable}', '{$escapedColumn}'), "
+                    . "COALESCE((SELECT MAX({$qCol}) FROM {$qTable}), 1), true);"
+                );
+            }
+
+            $indexQueries = [];
+            array_push(
+                $indexQueries,
+                ...self::__syncColumnIndexes($table, $columns, []),
+                ...self::__syncCompositeIndexes($table, $columns, (array) ($data->index ?? []), []),
+            );
+            array_walk($indexQueries, fn($q) => $this->connection->query($q));
+
+            $this->connection->commit();
+        } catch (\Throwable $e) {
+            if ($this->connection->inTransaction()) {
+                $this->connection->rollBack();
+            }
+
+            throw $e;
         }
     }
 

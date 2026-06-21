@@ -294,6 +294,8 @@ class Meilisearch extends DefaultEx
             $sub->setTable($this->table);
         }
 
+        $sub->_ensureSoftDeleteScope();
+
         ($where['value'])($sub);
         $filter = $sub->_buildFilter($sub->wheres);
 
@@ -475,6 +477,8 @@ class Meilisearch extends DefaultEx
 
     public function get(): Arr
     {
+        $this->_ensureSoftDeleteScope();
+
         $payload = ['q' => ''];
 
         $filter = $this->_buildFilter($this->wheres);
@@ -524,6 +528,8 @@ class Meilisearch extends DefaultEx
 
     public function update(Arr|array $data): bool
     {
+        $this->_ensureSoftDeleteScope();
+
         $data = (array) $data;
 
         if ($this->mode === 'model') {
@@ -546,9 +552,11 @@ class Meilisearch extends DefaultEx
         $document = $existing !== null ? array_merge($existing, $partial) : $partial;
         $document[$pkColumn->name] = $this->modelCast::pre($pkColumn, $pkValue);
 
+        $targetIds = $this->_resolveModifiedIdsForDocumentMutation();
+
         $this->_postDocuments([$document]);
 
-        return true;
+        return $this->_finalizeUpdate(true, $targetIds);
     }
 
     public function insert(Arr|array $data): mixed
@@ -583,16 +591,16 @@ class Meilisearch extends DefaultEx
         $this->_postDocuments([$document]);
 
         if ($pkColumn === null) {
-            return $document;
+            return $this->_finalizeInsertResult($document);
         }
 
-        return [
+        return $this->_finalizeInsertResult([
             $primaryKeyProperty => $this->modelCast::pos(
                 $pkColumn,
                 $document[$pkColumn->name] ?? $data[$primaryKeyProperty],
                 true,
             ),
-        ];
+        ]);
     }
 
     protected function _stripNullIdentityColumns(array $data): array
@@ -644,5 +652,57 @@ class Meilisearch extends DefaultEx
             substr($hex, 16, 4),
             substr($hex, 20, 12)
         );
+    }
+
+    protected function _executeSoftDelete(): int
+    {
+        $property  = $this->_softDeleteColumnProperty();
+        $timestamp = $this->_softDeleteTimestamp();
+        $rows      = $this->get();
+
+        if ($rows->count === 0) {
+            return 0;
+        }
+
+        $documents = [];
+
+        foreach ($rows as $row) {
+            $payload = $row->toArray();
+            $payload[$property] = $timestamp;
+            $documents[] = $this->_propertyDataToDocument($this->_prepareModelData($payload));
+        }
+
+        $this->_postDocuments($documents);
+
+        return $rows->count;
+    }
+
+    protected function _executeHardDelete(?Arr $preResolvedIds = null): int
+    {
+        $filter = $this->_buildFilter($this->wheres);
+
+        if ($filter === '') {
+            throw new Exception('Meilisearch delete requires where conditions.');
+        }
+
+        $this->pendingModifiedIds = $preResolvedIds ?? $this->_resolveModifiedIdsForDocumentMutation();
+
+        $response = $this->client->request(
+            'POST',
+            'indexes/' . $this->table . '/documents/delete',
+            [
+                'headers' => ['Content-Type' => 'application/json'],
+                'body'    => json_encode(['filter' => $filter], JSON_THROW_ON_ERROR),
+            ],
+        );
+
+        $taskUid = (int) (json_decode($response->getBody()->getContents())->taskUid ?? 0);
+        if ($taskUid === 0) {
+            throw new Exception('Failed to delete documents in model class ' . $this->model . ' with Meilisearch API.');
+        }
+
+        $this->_waitForTask($taskUid, 'delete documents in model class ' . $this->model);
+
+        return 1;
     }
 }

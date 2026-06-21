@@ -26,33 +26,23 @@ abstract class Model
     /** @var array<string, string>|null */
     private array|null $__snapshot = null;
 
+    private bool $__destroyed = false;
+
     public function save(): void
     {
+        $this->__assertNotDestroyed();
+
         $class = static::class;
+        static::__constructStatic();
 
-        $indexColumn = null;
-        foreach (self::$_data[$class]->column as $column) {
-            if ($column->primary === true || $column->autoIncrement === true) {
-                $indexColumn = $column;
-                break;
-            }
-        }
-        if ($indexColumn === null) {
-            foreach (self::$_data[$class]->column as $column) {
-                if ($column->unique === true) {
-                    $indexColumn = $column;
-                    break;
-                }
-            }
-        }
-
-        if ($indexColumn === null) {
-            throw new Error('Missing primary or unique column in table ' . self::getTable() . ' using class ' . static::class . '.');
-        }
+        $indexColumn = self::resolveIndexColumn($class);
 
         $data = $this->toArray();
 
         if ($data[$indexColumn->property] === null) {
+            self::_applyTimestamps($this, true);
+            $data = $this->toArray();
+
             self::_verifyConnection($class);
 
             /** @var Database\QueryBuilder\DefaultEx $queryBuilder */
@@ -78,11 +68,15 @@ abstract class Model
             return;
         }
 
+        self::_applyTimestamps($this, false);
+
         $this->__syncChangedFromSnapshot();
 
         if ($this->__changed === null || count($this->__changed) === 0) {
             return;
         }
+
+        $data = $this->toArray();
 
         foreach ($data as $key => $_) {
             if (in_array($key, $this->__changed) === false) {
@@ -97,10 +91,135 @@ abstract class Model
         /** @var Database\QueryBuilder\DefaultEx $queryBuilder */
         $queryBuilder = self::$_driver[self::$_data[$class]->database]->getQueryBuilder($class);
         $queryBuilder->setModel(static::class);
+        $queryBuilder->suppressModifiedIdsTracking();
         $queryBuilder->where($indexColumn->property, $this->{$indexColumn->property});
         $queryBuilder->update($data);
         $this->__changed  = null;
         $this->__snapshot = $this->__columnSnapshot();
+    }
+
+    public function destroy(): void
+    {
+        $this->__assertNotDestroyed();
+
+        $class = static::class;
+        static::__constructStatic();
+
+        $indexColumn = self::resolveIndexColumn($class);
+        $primaryKey  = $this->{$indexColumn->property};
+
+        if ($primaryKey === null) {
+            throw new Error('Cannot destroy a model without a primary key.');
+        }
+
+        self::_verifyConnection($class);
+
+        self::newQueryBuilder($class)
+            ->where($indexColumn->property, $primaryKey)
+            ->limit(1)
+            ->delete();
+
+        $this->__invalidateInstance();
+    }
+
+    public static function newQueryBuilder(?string $class = null): Database\QueryBuilder\DefaultEx
+    {
+        $class ??= static::class;
+        static::__constructStatic();
+        self::_verifyConnection($class);
+
+        /** @var Database\QueryBuilder\DefaultEx $queryBuilder */
+        $queryBuilder = self::$_driver[self::$_data[$class]->database]->getQueryBuilder($class);
+
+        return $queryBuilder->setModel($class);
+    }
+
+    public static function resolveIndexColumn(string $class): object
+    {
+        if (isset(self::$_data[$class]) === false) {
+            $class::__constructStatic();
+        }
+
+        foreach (self::$_data[$class]->column as $column) {
+            if ($column->primary === true || $column->autoIncrement === true) {
+                return $column;
+            }
+        }
+
+        foreach (self::$_data[$class]->column as $column) {
+            if ($column->unique === true) {
+                return $column;
+            }
+        }
+
+        throw new Error('Missing primary or unique column in table ' . self::getTable() . ' using class ' . $class . '.');
+    }
+
+    protected function __persistSnapshot(): void
+    {
+        $this->__changed  = null;
+        $this->__snapshot = $this->__columnSnapshot();
+    }
+
+    private function __assertNotDestroyed(): void
+    {
+        if ($this->__destroyed) {
+            throw new Error('Model instance was destroyed and can no longer be used.');
+        }
+    }
+
+    private function __invalidateInstance(): void
+    {
+        $class = static::class;
+
+        foreach (self::$_data[$class]->column as $column) {
+            $property = $column->property;
+
+            try {
+                $this->{$property} = null;
+            } catch (\Throwable) {
+            }
+        }
+
+        $this->__changed   = null;
+        $this->__snapshot  = null;
+        $this->__destroyed = true;
+    }
+
+    private static function _usesSoftDeletes(string $class): bool
+    {
+        return (self::$_data[$class]->usesSoftDeletes ?? false) === true;
+    }
+
+    private static function _usesTimestamps(string $class): bool
+    {
+        return (self::$_data[$class]->usesTimestamps ?? false) === true;
+    }
+
+    private static function _applyTimestamps(self $model, bool $isInsert): void
+    {
+        $class = $model::class;
+
+        if (self::_usesTimestamps($class) === false) {
+            return;
+        }
+
+        $now = \Flames\Date\DateTimeImmutable::now();
+
+        $createdAt = (string) (self::$_data[$class]->createdAtColumn ?? 'createdAt');
+        $updatedAt = (string) (self::$_data[$class]->updatedAtColumn ?? 'updatedAt');
+
+        if ($isInsert) {
+            if ($model->{$createdAt} === null) {
+                $model->set($createdAt, $now);
+            }
+
+            $model->set($updatedAt, $now);
+
+            return;
+        }
+
+        $model->set($updatedAt, $now);
     }
 
     public function touch(string ...$keys): static
@@ -236,6 +355,8 @@ abstract class Model
 
     public function __set(string $key, mixed $value)
     {
+        $this->__assertNotDestroyed();
+
         $class = static::class;
 
         if (isset(self::$_data[$class]->column[$key]) === true) {
@@ -263,6 +384,10 @@ abstract class Model
 
     public function __get(string $key)
     {
+        if ($this->__destroyed) {
+            return null;
+        }
+
         if (isset($this->{$key}) === true) {
             return $this->{$key};
         }

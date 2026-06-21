@@ -40,11 +40,8 @@ class Mysql extends DefaultEx
             return true;
         }
 
-        // PHP 8.5 pipe operator: build path → get mtime → hash
-        $hash = ROOT_PATH . str_replace('\\', '/', $data->class) . '.php'
-            |> filemtime(...)
-            |> strval(...)
-            |> sha1(...);
+        // Include metadata version so trait / column mapping changes trigger ALTER.
+        $hash = $this->__migrationHash($data);
 
         if (empty($this->tablesMigrations)) {
             try {
@@ -80,6 +77,7 @@ class Mysql extends DefaultEx
         }
 
         if (isset($this->tablesMigrations[$data->class]) && $this->tablesMigrations[$data->class] === $hash) {
+            $this->__ensureColumnOrder($data);
             $this->tableUpdated[$data->class] = true;
             return true;
         }
@@ -222,6 +220,8 @@ class Mysql extends DefaultEx
         $extraCols = array_diff($currentCols, $modelCols);
 
         array_walk($extraCols, fn($col) => $this->connection->query("ALTER TABLE `{$data->table}` DROP COLUMN `{$col}`;"));
+
+        $this->__ensureColumnOrder($data);
 
         $escaped = str_replace('\\', '\\\\', $data->class);
         $exists  = !empty(
@@ -440,6 +440,61 @@ class Mysql extends DefaultEx
         ');
         $this->connection->query('ALTER TABLE `flames_migration` ADD PRIMARY KEY (`id`);');
         $this->connection->query('ALTER TABLE `flames_migration` MODIFY `id` bigint(20) NOT NULL AUTO_INCREMENT;');
+    }
+
+    protected function __ensureColumnOrder(object $data): void
+    {
+        try {
+            $stmt = $this->connection->query('SHOW COLUMNS FROM `' . $data->table . '`;');
+        } catch (\PDOException) {
+            return;
+        }
+
+        $currentCols = array_column($stmt->fetchAll(), 'Field');
+        $modelCols   = $this->__modelColumnNames($data);
+
+        if ($currentCols === $modelCols || $this->__sameColumnSet($currentCols, $modelCols) === false) {
+            return;
+        }
+
+        $this->__syncColumnOrder($data->table, (array) $data->column, $modelCols);
+    }
+
+    /** @param list<\Flames\Collection\Arr> $columns @param list<string> $modelCols */
+    protected function __syncColumnOrder(string $table, array $columns, array $modelCols): void
+    {
+        $columnsByName = [];
+        foreach ($columns as $column) {
+            $columnsByName[$column->name] = $column;
+        }
+
+        $currentCols = array_column(
+            $this->connection->query('SHOW COLUMNS FROM `' . $table . '`;')->fetchAll(),
+            'Field',
+        );
+
+        foreach ($modelCols as $i => $colName) {
+            if (($currentCols[$i] ?? null) === $colName) {
+                continue;
+            }
+
+            $column = $columnsByName[$colName];
+            $base   = static::__createColumnBase($column);
+            $prev   = $i > 0 ? $modelCols[$i - 1] : null;
+            $after  = $prev !== null ? " AFTER `{$prev}`" : '';
+            $alter  = "ALTER TABLE `{$table}` MODIFY `{$colName}` {$base}{$after}";
+
+            if ($column->autoIncrement && \Flames\Orm\Database\Type\Kinds::isNumericAutoIncrementType($column)) {
+                $alter .= ' AUTO_INCREMENT';
+            }
+
+            $this->connection->query($alter . ';');
+
+            $currentCols = array_column(
+                $this->connection->query('SHOW COLUMNS FROM `' . $table . '`;')->fetchAll(),
+                'Field',
+            );
+        }
     }
 
     public function migrateQueue(string $table): void

@@ -15,10 +15,12 @@ use Flames\Orm\Database\Type\Maps;
  */
 class Meilisearch extends DefaultEx
 {
-    protected const __VERSION__ = 2;
+    protected const __VERSION__ = 3;
 
     protected $connection = null;
     protected $allIndexes = [];
+    /** @var array<string, string> index uid => migration hash */
+    protected array $settingsSynced = [];
     private static bool $containsFilterEnabled = false;
 
     public function __construct(\Flames\Orm\Database\RawConnection\Meilisearch $connection)
@@ -45,7 +47,9 @@ class Meilisearch extends DefaultEx
 
         self::_ensureContainsFilterEnabled($client);
 
-        if (in_array($data->table, $this->allIndexes, true)) {
+        $hash = $this->__migrationHash($data);
+
+        if (($this->settingsSynced[$data->table] ?? '') === $hash) {
             return true;
         }
 
@@ -87,7 +91,11 @@ class Meilisearch extends DefaultEx
 
         self::_syncIndexSettings($client, $data);
 
-        $this->allIndexes[] = $data->table;
+        $this->settingsSynced[$data->table] = $hash;
+
+        if (in_array($data->table, $this->allIndexes, true) === false) {
+            $this->allIndexes[] = $data->table;
+        }
 
         return true;
     }

@@ -6,6 +6,7 @@ namespace Flames\Orm;
 
 use Exception;
 use Flames\Collection\Arr;
+use Flames\Collection\Uuid;
 use Flames\Orm\Repository\Data;
 
 /**
@@ -16,6 +17,15 @@ abstract class Repository
     private static array $__setup = [];
     private static array $_driver = [];
     private static array $_data = [];
+
+    /** @var array<class-string, int|Uuid|null> */
+    private static array $_lastInsertId = [];
+
+    /** @var array<class-string, Arr> */
+    private static array $_modifiedIds = [];
+
+    /** @var array<class-string, list<class-string>> */
+    private static array $_repositoriesByModel = [];
 
     public static function __constructStatic(): void
     {
@@ -46,9 +56,61 @@ abstract class Repository
         }
 
         self::$_data[$class] = $data;
+
+        if (isset(self::$_repositoriesByModel[$data->model]) === false) {
+            self::$_repositoriesByModel[$data->model] = [];
+        }
+
+        if (in_array($class, self::$_repositoriesByModel[$data->model], true) === false) {
+            self::$_repositoriesByModel[$data->model][] = $class;
+        }
     }
 
-    protected static function getQueryBuilder(): Database\QueryBuilder\DefaultEx
+    public static function getLastInsertId(): int|Uuid|null
+    {
+        static::__constructStatic();
+
+        return self::$_lastInsertId[static::class] ?? null;
+    }
+
+    /**
+     * @param class-string $modelClass
+     */
+    public static function rememberLastInsertId(string $modelClass, mixed $id): void
+    {
+        if ($id === null || $id === false || $id === '') {
+            return;
+        }
+
+        if (is_int($id) === false && $id instanceof Uuid === false) {
+            return;
+        }
+
+        foreach (self::$_repositoriesByModel[$modelClass] ?? [] as $repositoryClass) {
+            self::$_lastInsertId[$repositoryClass] = $id;
+        }
+    }
+
+    public static function getModifiedIds(): Arr
+    {
+        static::__constructStatic();
+
+        return self::$_modifiedIds[static::class] ?? Arr();
+    }
+
+    /**
+     * @param class-string $modelClass
+     */
+    public static function rememberModifiedIds(string $modelClass, Arr|array $ids): void
+    {
+        $ids = $ids instanceof Arr ? $ids : Arr(array_values($ids));
+
+        foreach (self::$_repositoriesByModel[$modelClass] ?? [] as $repositoryClass) {
+            self::$_modifiedIds[$repositoryClass] = $ids;
+        }
+    }
+
+    public static function query(): Database\QueryBuilder\DefaultEx
     {
         $class = static::class;
 
@@ -66,7 +128,7 @@ abstract class Repository
     {
         $indexColumn = self::_getIndexColumn();
 
-        $queryBuilder = self::getQueryBuilder();
+        $queryBuilder = self::query();
         $queryBuilder->where($indexColumn->property, $index);
         $queryBuilder->limit(1);
         $rows = $queryBuilder->get();
@@ -81,7 +143,7 @@ abstract class Repository
     public static function withFilters(Arr|array $filters, Arr|array $options = null): Arr|null
     {
         $filters = self::_parseFilters($filters);
-        $queryBuilder = self::getQueryBuilder();
+        $queryBuilder = self::query();
 
         foreach ($filters as $filter) {
             self::_applyFilter($queryBuilder, $filter);
