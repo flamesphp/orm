@@ -17,7 +17,9 @@ final class ConnectionPort
         'mariadb'     => ['mysql' => 3306, 'mariadb' => 3306],
         'postgresql'  => ['postgresql' => 5432, 'postgres' => 5432],
         'mongodb'     => ['mongodb' => 27017],
-        'meilisearch' => ['meilisearch' => 7700],
+        'meilisearch'   => ['meilisearch' => 7700],
+        'elasticsearch' => ['elasticsearch' => 9200],
+        'opensearch'    => ['opensearch' => 9200],
     ];
 
     public static function resolve(string $host, string $driverType, mixed $configuredPort): int
@@ -40,6 +42,8 @@ final class ConnectionPort
             'postgresql', 'postgres'     => 5432,
             'mongodb'                    => 27017,
             'meilisearch'                => 7700,
+            'elasticsearch'              => 9200,
+            'opensearch'                 => 9200,
             default                      => 0,
         };
     }

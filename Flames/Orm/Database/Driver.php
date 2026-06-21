@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Flames\Orm\Database;
 
+use Flames\Orm\Database\Driver\Elasticsearch;
 use Flames\Orm\Database\Driver\MariaDb;
 use Flames\Orm\Database\Driver\Meilisearch;
 use Flames\Orm\Database\Driver\Mongodb;
 use Flames\Orm\Database\Driver\MySql;
+use Flames\Orm\Database\Driver\Opensearch;
 use Flames\Orm\Database\Driver\Postgresql;
 use Flames\Orm\Database\Driver\Sqlite;
 use PDO;
@@ -31,12 +33,14 @@ class Driver
         $rawConnection = RawConnection::getByConfigAndDatabase($config, $database);
 
         $driver = match ($config->type) {
-            'mariadb'     => new MariaDb($rawConnection),
-            'mysql'       => new MySql($rawConnection),
-            'postgresql'  => new Postgresql($rawConnection),
-            'meilisearch' => new Meilisearch($rawConnection),
-            'mongodb'     => new Mongodb($rawConnection),
-            'sqlite'      => new Sqlite($rawConnection),
+            'mariadb'       => new MariaDb($rawConnection),
+            'mysql'         => new MySql($rawConnection),
+            'postgresql'    => new Postgresql($rawConnection),
+            'meilisearch'   => new Meilisearch($rawConnection),
+            'elasticsearch' => new Elasticsearch($rawConnection),
+            'opensearch'    => new Opensearch($rawConnection),
+            'mongodb'       => new Mongodb($rawConnection),
+            'sqlite'        => new Sqlite($rawConnection),
             default       => throw new Exception(
                 'Database driver "' . ($config->type ?? '') . '" for connection "'
                 . ($config->database ?? $database ?? 'unknown') . '" is not implemented.',

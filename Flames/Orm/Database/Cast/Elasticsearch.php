@@ -1,0 +1,54 @@
+<?php
+declare(strict_types=1);
+
+namespace Flames\Orm\Database\Cast;
+
+use Flames\Orm\Database\Type\Kinds;
+
+/**
+ * @internal
+ */
+class Elasticsearch
+{
+    private static array $classCache = [];
+
+    public static function pre($column, $value, $fromDb = false)
+    {
+        return self::_getClass($column)::pre($column, $value, $fromDb);
+    }
+
+    public static function pos($column, $value, $fromDb = false)
+    {
+        return self::_getClass($column)::pos($column, $value, $fromDb);
+    }
+
+    protected static function _getClass(object $column): string
+    {
+        $type     = Kinds::resolveCastType($column, 'elasticsearch');
+        $cacheKey = $type . ':' . ($column->size ?? '');
+
+        if (isset(self::$classCache[$cacheKey])) {
+            return self::$classCache[$cacheKey];
+        }
+
+        $defaultClass = Kinds::castClassForColumn($column, 'elasticsearch');
+        $shortName    = substr($defaultClass, strrpos($defaultClass, '\\') + 1);
+
+        foreach (static::_castNamespaces() as $namespace) {
+            $class = 'Flames\\Orm\\Database\\Cast\\' . $namespace . '\\' . $shortName;
+            if (class_exists($class)) {
+                return self::$classCache[$cacheKey] = $class;
+            }
+        }
+
+        return self::$classCache[$cacheKey] = $defaultClass;
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected static function _castNamespaces(): array
+    {
+        return ['Elasticsearch', 'Meilisearch'];
+    }
+}

@@ -38,6 +38,14 @@ class DataFactory
             $data->type = 'meilisearch';
         }
 
+        if (($data->type === null || $data->type === '') && $database === 'elasticsearch') {
+            $data->type = 'elasticsearch';
+        }
+
+        if (($data->type === null || $data->type === '') && $database === 'opensearch') {
+            $data->type = 'opensearch';
+        }
+
         if ($data->type === 'mariadb' || $data->type === 'mysql' || $data->type === 'postgresql' || $data->type === 'mongodb') {
             $data->name = Env::get('DATABASE_' . $databaseUpper . '_NAME');
             $data->host = Env::get('DATABASE_' . $databaseUpper . '_HOST');
@@ -62,6 +70,16 @@ class DataFactory
             $data->masterKey = Env::get('DATABASE_' . $databaseUpper . '_MASTER_KEY')
                 ?? Env::get('DATABASE_' . $databaseUpper . '_KEY');
         }
+        elseif ($data->type === 'elasticsearch' || $data->type === 'opensearch') {
+            $data->host = Env::get('DATABASE_' . $databaseUpper . '_HOST');
+            $data->port = ConnectionPort::resolve(
+                (string) $data->host,
+                $data->type,
+                Env::get('DATABASE_' . $databaseUpper . '_PORT'),
+            );
+            $data->user = Env::get('DATABASE_' . $databaseUpper . '_USER');
+            $data->password = Env::get('DATABASE_' . $databaseUpper . '_PASSWORD');
+        }
 
         self::_validateConfig($data);
 
@@ -82,7 +100,7 @@ class DataFactory
             );
         }
 
-        $supported = ['mysql', 'mariadb', 'postgresql', 'meilisearch', 'mongodb', 'sqlite'];
+        $supported = ['mysql', 'mariadb', 'postgresql', 'meilisearch', 'elasticsearch', 'opensearch', 'mongodb', 'sqlite'];
         if (in_array($driver, $supported, true) === false) {
             throw new \RuntimeException(
                 'Database driver "' . $driver . '" for connection "' . $database . '" is not supported. '
@@ -112,11 +130,26 @@ class DataFactory
             return;
         }
 
-        if ($data->host === null || $data->host === '' || $data->masterKey === null || $data->masterKey === '') {
-            throw new \RuntimeException(
-                'Database connection "' . $database . '" (meilisearch) is incomplete. '
-                . 'Configure DATABASE_' . $envPrefix . '_HOST and DATABASE_' . $envPrefix . '_KEY in .env.',
-            );
+        if ($driver === 'meilisearch') {
+            if ($data->host === null || $data->host === '' || $data->masterKey === null || $data->masterKey === '') {
+                throw new \RuntimeException(
+                    'Database connection "' . $database . '" (meilisearch) is incomplete. '
+                    . 'Configure DATABASE_' . $envPrefix . '_HOST and DATABASE_' . $envPrefix . '_KEY in .env.',
+                );
+            }
+
+            return;
+        }
+
+        if (in_array($driver, ['elasticsearch', 'opensearch'], true)) {
+            if ($data->host === null || $data->host === '') {
+                throw new \RuntimeException(
+                    'Database connection "' . $database . '" (' . $driver . ') is incomplete. '
+                    . 'Configure DATABASE_' . $envPrefix . '_HOST in .env.',
+                );
+            }
+
+            return;
         }
     }
 
@@ -126,6 +159,14 @@ class DataFactory
 
         if ($database === 'meilisearch' && Env::get('DATABASE_MEILISEARCH_DRIVER') === null) {
             return 'SEARCH_MEILISEARCH';
+        }
+
+        if ($database === 'elasticsearch' && Env::get('DATABASE_ELASTICSEARCH_DRIVER') === null) {
+            return 'SEARCH_ELASTICSEARCH';
+        }
+
+        if ($database === 'opensearch' && Env::get('DATABASE_OPENSEARCH_DRIVER') === null) {
+            return 'SEARCH_OPENSEARCH';
         }
 
         return $databaseUpper;

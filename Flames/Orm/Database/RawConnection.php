@@ -44,6 +44,20 @@ class RawConnection
                 $config->masterKey,
                 $config
             );
+        } elseif ($config->type === 'elasticsearch') {
+            self::$connections[$database] = new RawConnection\Elasticsearch(
+                'http://' . $config->host . ':' . $config->port . '/',
+                $config->user ?? 'elastic',
+                $config->password ?? null,
+                $config,
+            );
+        } elseif ($config->type === 'opensearch') {
+            self::$connections[$database] = new RawConnection\Opensearch(
+                'http://' . $config->host . ':' . $config->port . '/',
+                $config->user ?? null,
+                $config->password ?? null,
+                $config,
+            );
         } elseif ($config->type === 'mongodb') {
             self::$connections[$database] = self::_connectMongodb($config, $database);
         } elseif ($config->type === 'sqlite') {

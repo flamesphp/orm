@@ -71,7 +71,7 @@ final class Kinds
         $type   = self::normalize($type);
         $driver = strtolower(trim($driver));
 
-        if (in_array($driver, ['mysql', 'mariadb', 'meilisearch', 'mongodb', 'sqlite'], true)) {
+        if (in_array($driver, ['mysql', 'mariadb', 'meilisearch', 'elasticsearch', 'opensearch', 'mongodb', 'sqlite'], true)) {
             return Maps::STORAGE_ALIASES[$type] ?? $type;
         }
 
