@@ -44,6 +44,8 @@ class RawConnection
                 $config->masterKey,
                 $config
             );
+        } elseif ($config->type === 'mongodb') {
+            self::$connections[$database] = self::_connectMongodb($config, $database);
         } else {
             $connection = (string) ($config->database ?? $database);
             $driver     = (string) ($config->type ?? '');
@@ -54,5 +56,19 @@ class RawConnection
         }
 
         return self::$connections[$database];
+    }
+
+    private static function _connectMongodb(mixed $config, string $database): RawConnection\Mongodb
+    {
+        $user = trim((string) ($config->user ?? ''));
+        $pass = (string) ($config->password ?? '');
+        $auth = $user !== '' ? rawurlencode($user) . ':' . rawurlencode($pass) . '@' : '';
+        $uri  = 'mongodb://' . $auth . $config->host . ':' . $config->port . '/' . $config->name;
+
+        if ($user !== '') {
+            $uri .= '?authSource=admin';
+        }
+
+        return new RawConnection\Mongodb($uri, (string) $config->name, $config);
     }
 }

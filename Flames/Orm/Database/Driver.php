@@ -6,6 +6,7 @@ namespace Flames\Orm\Database;
 
 use Flames\Orm\Database\Driver\MariaDb;
 use Flames\Orm\Database\Driver\Meilisearch;
+use Flames\Orm\Database\Driver\Mongodb;
 use Flames\Orm\Database\Driver\MySql;
 use Flames\Orm\Database\Driver\Postgresql;
 use PDO;
@@ -33,6 +34,7 @@ class Driver
             'mysql'       => new MySql($rawConnection),
             'postgresql'  => new Postgresql($rawConnection),
             'meilisearch' => new Meilisearch($rawConnection),
+            'mongodb'     => new Mongodb($rawConnection),
             default       => throw new Exception(
                 'Database driver "' . ($config->type ?? '') . '" for connection "'
                 . ($config->database ?? $database ?? 'unknown') . '" is not implemented.',

@@ -8,6 +8,7 @@
   "require": {
     "php": ">=8.5",
     "ext-json": "*",
+    "ext-mongodb": "*",
     "ext-pdo": "*",
     "flamesphp/date": "*",
     "flamesphp/geometry": "*",

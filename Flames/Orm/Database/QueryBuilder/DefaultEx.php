@@ -793,7 +793,7 @@ abstract class DefaultEx
         return $driverIdentity;
     }
 
-    private const UUID_INSERT_MAX_ATTEMPTS = 5;
+    protected const UUID_INSERT_MAX_ATTEMPTS = 5;
 
     /**
      * Retries model inserts when an auto-generated UUID primary key collides.
@@ -834,12 +834,12 @@ abstract class DefaultEx
 
             try {
                 return $attemptInsert($payload);
-            } catch (\PDOException $exception) {
+            } catch (\Throwable $exception) {
                 $lastException = $exception;
 
                 if (
                     $attempt >= self::UUID_INSERT_MAX_ATTEMPTS
-                    || $this->_isUuidPrimaryKeyCollision(
+                    || $this->_isGeneratedPrimaryKeyCollision(
                         $exception,
                         $pkColumn,
                         $payload[$pkProperty] ?? null,
@@ -871,6 +871,36 @@ abstract class DefaultEx
         $value = $data[$pkProperty];
 
         return $value !== null && $value !== '' && $value !== 0 && $value !== '0';
+    }
+
+    protected function _isGeneratedPrimaryKeyCollision(
+        \Throwable $exception,
+        object $pkColumn,
+        mixed $attemptedPrimaryKey,
+    ): bool {
+        if ($exception instanceof \PDOException) {
+            return $this->_isUuidPrimaryKeyCollision($exception, $pkColumn, $attemptedPrimaryKey);
+        }
+
+        if ($this->_usesUuidPrimaryKey() === false) {
+            return false;
+        }
+
+        if ($exception instanceof \MongoDB\Driver\Exception\BulkWriteException === false) {
+            return false;
+        }
+
+        if ($exception->getCode() !== 11000) {
+            return false;
+        }
+
+        if ($this->_errorTargetsPrimaryKey($exception->getMessage(), (string) ($pkColumn->name ?? 'id'), '', 11000) === false) {
+            return false;
+        }
+
+        $attempted = strtolower(trim((string) $attemptedPrimaryKey));
+
+        return $attempted !== '' && str_contains(strtolower($exception->getMessage()), $attempted);
     }
 
     protected function _isUuidPrimaryKeyCollision(

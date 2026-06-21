@@ -38,7 +38,7 @@ class DataFactory
             $data->type = 'meilisearch';
         }
 
-        if ($data->type === 'mariadb' || $data->type === 'mysql' || $data->type === 'postgresql') {
+        if ($data->type === 'mariadb' || $data->type === 'mysql' || $data->type === 'postgresql' || $data->type === 'mongodb') {
             $data->name = Env::get('DATABASE_' . $databaseUpper . '_NAME');
             $data->host = Env::get('DATABASE_' . $databaseUpper . '_HOST');
             $data->port = ConnectionPort::resolve(
@@ -79,7 +79,7 @@ class DataFactory
             );
         }
 
-        $supported = ['mysql', 'mariadb', 'postgresql', 'meilisearch'];
+        $supported = ['mysql', 'mariadb', 'postgresql', 'meilisearch', 'mongodb'];
         if (in_array($driver, $supported, true) === false) {
             throw new \RuntimeException(
                 'Database driver "' . $driver . '" for connection "' . $database . '" is not supported. '
@@ -87,7 +87,7 @@ class DataFactory
             );
         }
 
-        if ($driver === 'mysql' || $driver === 'mariadb' || $driver === 'postgresql') {
+        if ($driver === 'mysql' || $driver === 'mariadb' || $driver === 'postgresql' || $driver === 'mongodb') {
             if ($data->host === null || $data->host === '' || $data->name === null || $data->name === '') {
                 throw new \RuntimeException(
                     'Database connection "' . $database . '" (' . $driver . ') is incomplete. '
