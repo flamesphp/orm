@@ -7,16 +7,17 @@ use Flames\Collection\Arr;
 use Flames\Collection\ArrImmutable;
 use Flames\Orm\Database\Cast\Default\Set as DefaultSet;
 use Flames\Orm\Database\Cast\Support\ArrValue;
+use Flames\Orm\Database\Cast\Support\ScalarValue;
 
 class Set
 {
     public static function pre($column, $value): string|null
     {
-        if ($column->nullable === true && $value === null) {
+        if (ScalarValue::isNull($column, $value)) {
             return null;
         }
 
-        $items = self::__itemsFromValue($value);
+        $items = ScalarValue::normalizeListItems($value);
 
         if ($items === []) {
             return '{}';
@@ -32,7 +33,7 @@ class Set
 
     public static function pos($column, $value, $fromDb = false)
     {
-        if ($column->nullable === true && $value === null) {
+        if (ScalarValue::isNull($column, $value)) {
             return null;
         }
 
@@ -51,48 +52,6 @@ class Set
         }
 
         return DefaultSet::pos($column, $value, $fromDb);
-    }
-
-    /**
-     * @return list<string>
-     */
-    private static function __itemsFromValue(mixed $value): array
-    {
-        if ($value instanceof ArrImmutable) {
-            $value = $value->toArray();
-        }
-
-        if ($value instanceof Arr) {
-            $value = $value->toArray();
-        }
-
-        if (is_string($value)) {
-            $trimmed = trim($value);
-            if ($trimmed !== '' && str_starts_with($trimmed, '{')) {
-                return self::__parsePgArray($trimmed);
-            }
-
-            return array_values(array_filter(
-                array_map('trim', explode(',', $value)),
-                static fn (string $item): bool => $item !== '',
-            ));
-        }
-
-        if (!is_array($value)) {
-            if ($value instanceof \UnitEnum) {
-                return [$value instanceof \BackedEnum ? (string) $value->value : $value->name];
-            }
-
-            return [(string) $value];
-        }
-
-        return array_map(static function (mixed $item): string {
-            if ($item instanceof \UnitEnum) {
-                return $item instanceof \BackedEnum ? (string) $item->value : $item->name;
-            }
-
-            return (string) $item;
-        }, array_values($value));
     }
 
     /**

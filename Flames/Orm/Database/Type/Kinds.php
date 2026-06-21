@@ -215,6 +215,10 @@ final class Kinds
             return 'char(36)';
         }
 
+        if ($type === 'array' || $type === 'object') {
+            return 'json';
+        }
+
         if ($type === 'xml' || $type === 'tsvector') {
             return 'longtext';
         }
@@ -340,6 +344,10 @@ final class Kinds
 
         if ($type === 'set') {
             return 'text[]';
+        }
+
+        if ($type === 'array' || $type === 'object') {
+            return 'jsonb';
         }
 
         if ($type === 'decimal') {

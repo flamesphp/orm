@@ -3,28 +3,18 @@ declare(strict_types=1);
 
 namespace Flames\Orm\Database\Cast\Default;
 
+use Flames\Orm\Database\Cast\Support\ScalarValue;
+
 class Decimal
 {
     public static function pre($column, $value): string|null
     {
-        if ($column->nullable === true && $value === null) {
-            return null;
-        }
-
-        if (is_string($value)) {
-            return $value;
-        }
-
-        if (is_int($value) || is_float($value)) {
-            return (string) $value;
-        }
-
-        return (string) $value;
+        return ScalarValue::toDecimalString($column, $value);
     }
 
     public static function pos($column, $value): string|float|null
     {
-        if ($column->nullable === true && $value === null) {
+        if (ScalarValue::isNull($column, $value)) {
             return null;
         }
 

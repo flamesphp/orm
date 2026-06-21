@@ -3,4 +3,4 @@ declare(strict_types=1);
 
 namespace Flames\Orm\Database\Cast\Meilisearch;
 
-class Char extends Strings {}
+class Jsonb extends Json {}

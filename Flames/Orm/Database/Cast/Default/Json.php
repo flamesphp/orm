@@ -6,12 +6,13 @@ namespace Flames\Orm\Database\Cast\Default;
 use Flames\Collection\Arr;
 use Flames\Collection\ArrImmutable;
 use Flames\Orm\Database\Cast\Support\ArrValue;
+use Flames\Orm\Database\Cast\Support\ScalarValue;
 
 class Json
 {
     public static function pre($column, $value): string|null
     {
-        if ($column->nullable === true && $value === null) {
+        if (ScalarValue::isNull($column, $value)) {
             return null;
         }
 
@@ -22,14 +23,14 @@ class Json
         }
 
         return json_encode(
-            ArrValue::toPlain($value),
+            ScalarValue::normalizeJson($value),
             JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
         );
     }
 
     public static function pos($column, $value, $fromDb = false): Arr|ArrImmutable|array|null
     {
-        if ($column->nullable === true && $value === null) {
+        if (ScalarValue::isNull($column, $value)) {
             return null;
         }
 

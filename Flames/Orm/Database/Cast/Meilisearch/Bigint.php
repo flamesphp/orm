@@ -1,37 +1,22 @@
 <?php
 declare(strict_types=1);
 
-
 namespace Flames\Orm\Database\Cast\Meilisearch;
+
+use Flames\Orm\Database\Cast\Default\Bigint as DefaultBigint;
+use Flames\Orm\Database\Cast\Support\DocumentValue;
 
 class Bigint
 {
     public static function pre($column, $value): int|string|null
     {
-        if ($value === null || $value === false || $value === '') {
-            return null;
-        }
+        $number = DocumentValue::toNumber($column, $value);
 
-        if ($column->unsigned === true) {
-            $numeric = is_numeric($value) ? $value : 0;
-
-            // Meilisearch range filters compare lexicographically on strings ("10" >= 5 fails).
-            if ((float) $numeric > 9007199254740991) {
-                return (string) $numeric;
-            }
-
-            return (int) $numeric;
-        }
-
-        return (int) $value;
+        return is_float($number) ? (int) $number : $number;
     }
 
     public static function pos($column, $value, $fromDb = false): int|null
     {
-        if ($value === null || $value === false || $value === '') {
-            return null;
-        }
-
-        return (int) $value;
+        return DefaultBigint::pos($column, $value, $fromDb);
     }
 }

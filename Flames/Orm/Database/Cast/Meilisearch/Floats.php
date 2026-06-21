@@ -1,26 +1,22 @@
 <?php
 declare(strict_types=1);
 
-
 namespace Flames\Orm\Database\Cast\Meilisearch;
+
+use Flames\Orm\Database\Cast\Default\Floats as DefaultFloats;
+use Flames\Orm\Database\Cast\Support\DocumentValue;
 
 class Floats
 {
     public static function pre($column, $value): float|null
     {
-        if ($column->nullable === true && $value === null) {
-            return null;
-        }
+        $number = DocumentValue::toNumber($column, $value);
 
-        return (float) $value;
+        return is_int($number) ? (float) $number : ($number === null ? null : (float) $number);
     }
 
     public static function pos($column, $value): float|null
     {
-        if ($column->nullable === true && $value === null) {
-            return null;
-        }
-
-        return (float) $value;
+        return DefaultFloats::pos($column, $value);
     }
 }

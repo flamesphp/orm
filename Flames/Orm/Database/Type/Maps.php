@@ -78,6 +78,8 @@ final class Maps
         'longblob'    => 'Blob',
         'enum'        => 'Enum',
         'set'         => 'Set',
+        'array'       => 'ArrayList',
+        'object'      => 'Json',
         'json'        => 'Json',
         'jsonb'       => 'Jsonb',
         'date'        => 'Date',
@@ -128,7 +130,8 @@ final class Maps
 
     /** @var array<string, string> Shared logical aliases on non-PostgreSQL drivers (DDL + cast). */
     public const STORAGE_ALIASES = [
-        'jsonb' => 'json',
+        'jsonb'  => 'json',
+        'object' => 'json',
     ];
 
     /** @var array<string, string> MySQL/MariaDB DDL renames after PG-native handlers (serials, etc.). */
