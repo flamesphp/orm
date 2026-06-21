@@ -46,6 +46,16 @@ class RawConnection
             );
         } elseif ($config->type === 'mongodb') {
             self::$connections[$database] = self::_connectMongodb($config, $database);
+        } elseif ($config->type === 'sqlite') {
+            try {
+                $path = (string) ($config->path ?? '');
+                $connectionUri = 'sqlite:' . $path;
+                self::$connections[$database] = new RawConnection\Pdo($connectionUri, null, null, null, $config, $database);
+                self::$connections[$database]->exec('PRAGMA foreign_keys = ON;');
+                self::$connections[$database]->exec('PRAGMA journal_mode = WAL;');
+            } catch (PDOException $e) {
+                throw new \Error($e->getMessage());
+            }
         } else {
             $connection = (string) ($config->database ?? $database);
             $driver     = (string) ($config->type ?? '');

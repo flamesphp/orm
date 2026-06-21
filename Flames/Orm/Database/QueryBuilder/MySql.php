@@ -18,10 +18,10 @@ use Exception;
 class MySql extends DefaultEx
 {
     // Per-table column list (survives across requests in long-running processes)
-    private static array $columnCache = [];
+    protected static array $columnCache = [];
 
     // Cached SELECT column SQL string per table  (avoids rebuilding string on each get())
-    private static array $selectSqlCache = [];
+    protected static array $selectSqlCache = [];
 
     // Prepared statement cache keyed by connection-id + query hash
     private static array $stmtCache = [];
@@ -77,16 +77,31 @@ class MySql extends DefaultEx
             $fragments[] = [$where['operator']->value, $fragment];
         }
 
-        $sql = array_reduce(
-            $fragments,
-            fn($carry, $item) => $carry === '' ? $item[1] : "$carry {$item[0]} {$item[1]}",
-            ''
-        );
+        $sql = $this->_combineWhereFragments($fragments);
 
         return ['data' => $data, 'query' => $sql . "\r\n"];
     }
 
-    private function _whereSimplePart(array $w, array $data, int $idx): array
+    /**
+     * @param list<array{0: string, 1: string}> $fragments
+     */
+    protected function _combineWhereFragments(array $fragments): string
+    {
+        if ($fragments === []) {
+            return '';
+        }
+
+        $sql = $fragments[0][1];
+
+        for ($index = 1, $count = count($fragments); $index < $count; $index++) {
+            [$operator, $fragment] = $fragments[$index];
+            $sql = $sql . ' ' . $operator . ' ' . $fragment;
+        }
+
+        return $sql;
+    }
+
+    protected function _whereSimplePart(array $w, array $data, int $idx): array
     {
         $base = 'where_' . $this->whereBaseIndex . $idx . '_' . $w['key'];
         $col  = '`' . $this->table . '`.`' . $w['key'] . '`';
@@ -149,7 +164,7 @@ class MySql extends DefaultEx
         return ["$col $between :$fromKey AND :$toKey", $data, $idx + 1];
     }
 
-    private function _whereLikePart(
+    protected function _whereLikePart(
         string $col,
         mixed $value,
         array $data,
@@ -176,7 +191,7 @@ class MySql extends DefaultEx
         return ["$col $expression", $data, ++$idx];
     }
 
-    private function _whereDistinctPart(
+    protected function _whereDistinctPart(
         string $col,
         array $w,
         array $data,
@@ -190,7 +205,7 @@ class MySql extends DefaultEx
         return ['(' . OperatorSql::mysqlDistinctFrom($col, $param, $notDistinct) . ')', $data, ++$idx];
     }
 
-    private function _whereRegexpPart(
+    protected function _whereRegexpPart(
         string $col,
         mixed $value,
         array $data,
@@ -204,7 +219,7 @@ class MySql extends DefaultEx
         return ["$col $operator :$base", $data, ++$idx];
     }
 
-    private function _whereComparePart(string $col, array $w, array $data, string $base, int $idx): array
+    protected function _whereComparePart(string $col, array $w, array $data, string $base, int $idx): array
     {
         $data[$base] = $w['value'];
         $type        = $this->_whereColumnType($w['key']);
@@ -221,7 +236,7 @@ class MySql extends DefaultEx
         return "$col = CAST(:$paramName AS JSON)";
     }
 
-    private function _whereColumnType(string $columnName): ?string
+    protected function _whereColumnType(string $columnName): ?string
     {
         if ($this->mode !== 'model') {
             return null;
@@ -290,7 +305,7 @@ class MySql extends DefaultEx
         return ['(' . $left . ' ' . $w['condition'] . ' ' . $right . ')', $data, $idx];
     }
 
-    private function _whereBitwisePart(array $w, array $data, int $idx): array
+    protected function _whereBitwisePart(array $w, array $data, int $idx): array
     {
         $col = $this->_qualifiedColumn($w['key']);
 
@@ -311,7 +326,7 @@ class MySql extends DefaultEx
         return [$expression . ' ' . $w['condition'] . ' :' . $valueKey, $data, ++$idx];
     }
 
-    private function _whereStrcmpPart(array $w, array $data, int $idx): array
+    protected function _whereStrcmpPart(array $w, array $data, int $idx): array
     {
         $left  = $this->_qualifiedColumn($w['left']);
         $right = ($w['rightIsValue'] ?? false)
@@ -327,7 +342,7 @@ class MySql extends DefaultEx
         return ['(STRCMP(' . $left . ', ' . $right . ') ' . $compare . ')', $data, ++$idx];
     }
 
-    private function _whereRegexpLikePart(array $w, array $data, int $idx): array
+    protected function _whereRegexpLikePart(array $w, array $data, int $idx): array
     {
         $col        = $this->_qualifiedColumn($w['key']);
         $patternKey = 'where_' . $this->whereBaseIndex . $idx . '_pattern';
@@ -345,7 +360,7 @@ class MySql extends DefaultEx
         return ['(' . $col . ' ' . $operator . ' :' . $patternKey . ')', $data, ++$idx];
     }
 
-    private function _whereJsonPathPart(array $w, array $data, int $idx): array
+    protected function _whereJsonPathPart(array $w, array $data, int $idx): array
     {
         $col      = $this->_qualifiedColumn($w['key']);
         $path     = str_starts_with($w['path'], '$') ? $w['path'] : '$.' . ltrim($w['path'], '.');
@@ -364,7 +379,7 @@ class MySql extends DefaultEx
         return ['(' . $extract . ' ' . $w['condition'] . ' :' . $valueKey . ')', $data, ++$idx];
     }
 
-    private function _whereOperatorPart(array $w, array $data, int $idx): array
+    protected function _whereOperatorPart(array $w, array $data, int $idx): array
     {
         $opts     = $w['options'] ?? [];
         $operator = $w['compare'];
@@ -447,7 +462,7 @@ class MySql extends DefaultEx
         return ['(' . $col . ' ' . $operator . ' :' . $key . ')', $data, ++$idx];
     }
 
-    private function _whereMysqlJsonOperatorPart(array $w, array $data, int $idx, string $col): array
+    protected function _whereMysqlJsonOperatorPart(array $w, array $data, int $idx, string $col): array
     {
         $operator = $w['compare'];
         $opts     = $w['options'] ?? [];
@@ -492,7 +507,7 @@ class MySql extends DefaultEx
         throw new UnsupportedQueryException('whereOperator(json,' . $operator . ')', 'mysql');
     }
 
-    private function _whereFullTextPart(array $w, array $data, int $idx): array
+    protected function _whereFullTextPart(array $w, array $data, int $idx): array
     {
         $terms = $this->_parseFullTextTerms((string) $w['query'], (string) ($w['mode'] ?? 'BOOLEAN'));
         if ($terms === []) {
@@ -544,7 +559,7 @@ class MySql extends DefaultEx
 
     // ── Column resolution ─────────────────────────────────────────────────────
 
-    private function _tableColumns(): array
+    protected function _tableColumns(): array
     {
         if (isset(self::$columnCache[$this->table])) {
             return self::$columnCache[$this->table];
@@ -565,7 +580,7 @@ class MySql extends DefaultEx
         return self::$columnCache[$this->table] = $cols;
     }
 
-    private function _selectColumnsSql(): string
+    protected function _selectColumnsSql(): string
     {
         if ($this->mode === 'model') {
             $parts = [];
@@ -589,7 +604,7 @@ class MySql extends DefaultEx
         ));
     }
 
-    private function _sqlValueExpression(string $key): string
+    protected function _sqlValueExpression(string $key): string
     {
         if ($this->mode !== 'model' || !isset($this->modelData->column[$key])) {
             return ':' . $key;

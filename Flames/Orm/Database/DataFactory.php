@@ -49,6 +49,9 @@ class DataFactory
             $data->user = Env::get('DATABASE_' . $databaseUpper . '_USER');
             $data->password = Env::get('DATABASE_' . $databaseUpper . '_PASSWORD');
         }
+        elseif ($data->type === 'sqlite') {
+            $data->path = self::_resolveSqlitePath((string) Env::get('DATABASE_' . $databaseUpper . '_PATH'));
+        }
         elseif ($data->type === 'meilisearch') {
             $data->host = Env::get('DATABASE_' . $databaseUpper . '_HOST');
             $data->port = ConnectionPort::resolve(
@@ -79,7 +82,7 @@ class DataFactory
             );
         }
 
-        $supported = ['mysql', 'mariadb', 'postgresql', 'meilisearch', 'mongodb'];
+        $supported = ['mysql', 'mariadb', 'postgresql', 'meilisearch', 'mongodb', 'sqlite'];
         if (in_array($driver, $supported, true) === false) {
             throw new \RuntimeException(
                 'Database driver "' . $driver . '" for connection "' . $database . '" is not supported. '
@@ -92,6 +95,17 @@ class DataFactory
                 throw new \RuntimeException(
                     'Database connection "' . $database . '" (' . $driver . ') is incomplete. '
                     . 'Configure DATABASE_' . $envPrefix . '_HOST and DATABASE_' . $envPrefix . '_NAME in .env.',
+                );
+            }
+
+            return;
+        }
+
+        if ($driver === 'sqlite') {
+            if (($data->path ?? '') === '') {
+                throw new \RuntimeException(
+                    'Database connection "' . $database . '" (sqlite) is incomplete. '
+                    . 'Configure DATABASE_' . $envPrefix . '_PATH in .env.',
                 );
             }
 
@@ -115,6 +129,25 @@ class DataFactory
         }
 
         return $databaseUpper;
+    }
+
+    private static function _resolveSqlitePath(string $path): string
+    {
+        $path = trim($path);
+        if ($path === '') {
+            return '';
+        }
+
+        if ($path[0] !== '/' && preg_match('/^[A-Za-z]:[\\\\\\/]/', $path) !== 1) {
+            $path = ROOT_PATH . ltrim($path, '/');
+        }
+
+        $directory = dirname($path);
+        if (is_dir($directory) === false && mkdir($directory, 0775, true) === false) {
+            throw new \RuntimeException('Unable to create SQLite directory: ' . $directory);
+        }
+
+        return $path;
     }
 
     /**

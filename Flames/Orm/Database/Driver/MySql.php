@@ -66,7 +66,7 @@ class Mysql extends DefaultEx
 
             // PHP 8.4: build migration map in one pass; skip outdated version rows
             foreach ($rows as $row) {
-                if ((int)$row['version'] === self::__VERSION__) {
+                if ((int)$row['version'] === static::__VERSION__) {
                     $this->tablesMigrations[$row['class']] = $row['hash'];
                 }
             }
@@ -138,7 +138,7 @@ class Mysql extends DefaultEx
 
         $escaped = str_replace('\\', '\\\\', $data->class);
         $this->connection->query(
-            "INSERT INTO `flames_migration` (`id`, `class`, `hash`, `version`) VALUES (NULL, '{$escaped}', '{$hash}', " . self::__VERSION__ . ");"
+            "INSERT INTO `flames_migration` (`id`, `class`, `hash`, `version`) VALUES (NULL, '{$escaped}', '{$hash}', " . static::__VERSION__ . ");"
         );
 
         $this->allTables[] = $data->table;
@@ -230,11 +230,11 @@ class Mysql extends DefaultEx
 
         if ($exists) {
             $this->connection->query(
-                "UPDATE `flames_migration` SET `hash` = '{$hash}', `version` = '" . self::__VERSION__ . "' WHERE `class` = '{$escaped}';"
+                "UPDATE `flames_migration` SET `hash` = '{$hash}', `version` = '" . static::__VERSION__ . "' WHERE `class` = '{$escaped}';"
             );
         } else {
             $this->connection->query(
-                "INSERT INTO `flames_migration` (`id`, `class`, `hash`, `version`) VALUES (NULL, '{$escaped}', '{$hash}', " . self::__VERSION__ . ");"
+                "INSERT INTO `flames_migration` (`id`, `class`, `hash`, `version`) VALUES (NULL, '{$escaped}', '{$hash}', " . static::__VERSION__ . ");"
             );
         }
     }

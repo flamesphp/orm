@@ -71,7 +71,7 @@ final class Kinds
         $type   = self::normalize($type);
         $driver = strtolower(trim($driver));
 
-        if (in_array($driver, ['mysql', 'mariadb', 'meilisearch', 'mongodb'], true)) {
+        if (in_array($driver, ['mysql', 'mariadb', 'meilisearch', 'mongodb', 'sqlite'], true)) {
             return Maps::STORAGE_ALIASES[$type] ?? $type;
         }
 
@@ -156,6 +156,10 @@ final class Kinds
     {
         if ($driver === 'postgresql') {
             return self::ddlTypePostgresql($column);
+        }
+
+        if ($driver === 'sqlite') {
+            return self::ddlTypeSqlite($column);
         }
 
         $type = self::resolveCastType($column);
@@ -322,6 +326,45 @@ final class Kinds
         $escaped = str_replace("'", "''", (string) $column->default);
 
         return " DEFAULT '" . $escaped . "'";
+    }
+
+    public static function ddlTypeSqlite(object $column): string
+    {
+        $type = self::resolveCastType($column, 'sqlite');
+
+        if (in_array($type, ['smallint', 'int', 'mediumint', 'tinyint', 'bigint', 'integer', 'year', 'bool', 'boolean', 'bit'], true)) {
+            return 'INTEGER';
+        }
+
+        if (in_array($type, ['float', 'double', 'real'], true)) {
+            return 'REAL';
+        }
+
+        if (in_array($type, ['decimal', 'numeric', 'money'], true)) {
+            return 'TEXT';
+        }
+
+        if (self::isBinary($type)) {
+            return 'BLOB';
+        }
+
+        if (in_array($type, ['json', 'jsonb', 'array', 'object', 'set', 'enum', 'vector'], true) || self::isRange($type)) {
+            return 'TEXT';
+        }
+
+        if ($type === 'uuid' || self::isNativeGeo($type) || self::isSpatial($type)) {
+            return 'TEXT';
+        }
+
+        if (in_array($type, ['xml', 'tsvector', 'tsquery', 'interval', 'pg_lsn', 'txid_snapshot', 'cidr', 'inet', 'macaddr', 'macaddr8', 'varbit'], true)) {
+            return 'TEXT';
+        }
+
+        if (in_array($type, ['date', 'datetime', 'timestamp', 'timestamptz', 'time', 'timetz'], true)) {
+            return 'TEXT';
+        }
+
+        return 'TEXT';
     }
 
     public static function ddlTypePostgresql(object $column): string
