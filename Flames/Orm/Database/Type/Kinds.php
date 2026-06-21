@@ -39,6 +39,18 @@ final class Kinds
         return Maps::NORMALIZE[$type] ?? $type;
     }
 
+    public static function isUuidColumn(object $column): bool
+    {
+        return self::normalize((string) ($column->type ?? 'string')) === 'uuid';
+    }
+
+    public static function isNumericAutoIncrementType(object $column): bool
+    {
+        $type = self::normalize((string) ($column->type ?? 'string'));
+
+        return in_array($type, ['smallint', 'integer', 'int', 'mediumint', 'tinyint', 'bigint'], true);
+    }
+
     public static function resolveCastType(object $column, ?string $driver = null): string
     {
         $type = self::normalize($column->type);

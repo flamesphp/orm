@@ -106,6 +106,10 @@ abstract class Repository
             'NOT BETWEEN'      => self::_linkMethod('WhereNotBetween', $logic),
             'IS NULL'          => self::_linkMethod('WhereNull', $logic),
             'IS NOT NULL'      => self::_linkMethod('WhereNotNull', $logic),
+            'IS DISTINCT FROM' => self::_linkMethod('WhereIsDistinctFrom', $logic),
+            'IS NOT DISTINCT FROM' => self::_linkMethod('WhereIsNotDistinctFrom', $logic),
+            'ILIKE'            => self::_linkMethod('WhereILike', $logic),
+            'NOT ILIKE'        => self::_linkMethod('WhereNotILike', $logic),
             'IS TRUE'          => self::_linkMethod('WhereIsTrue', $logic),
             'IS FALSE'         => self::_linkMethod('WhereIsFalse', $logic),
             'IS UNKNOWN'       => self::_linkMethod('WhereIsUnknown', $logic),
@@ -127,6 +131,16 @@ abstract class Repository
         if ($method !== null) {
             if (in_array($operator, ['IS NULL', 'IS NOT NULL', 'IS TRUE', 'IS FALSE', 'IS UNKNOWN', 'IS NOT TRUE', 'IS NOT FALSE', 'IS NOT UNKNOWN'], true)) {
                 $queryBuilder->{$method}($filter[0]);
+                return;
+            }
+
+            if (in_array($operator, ['ILIKE', 'NOT ILIKE'], true)) {
+                $queryBuilder->{$method}($filter[0], $filter[2], $filter[4]['wrap'] ?? false);
+                return;
+            }
+
+            if (in_array($operator, ['IS DISTINCT FROM', 'IS NOT DISTINCT FROM'], true)) {
+                $queryBuilder->{$method}($filter[0], $filter[2]);
                 return;
             }
 

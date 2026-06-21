@@ -38,14 +38,20 @@ class Meilisearch extends DefaultEx
             WhereType::RegexpLike => throw new UnsupportedQueryException('whereRegexpLike', self::DRIVER),
             WhereType::JsonPath   => throw new UnsupportedQueryException('whereJsonExtract', self::DRIVER),
             WhereType::FullText   => throw new UnsupportedQueryException('whereFullText', self::DRIVER),
+            WhereType::Operator   => null,
             default               => null,
         };
 
         return parent::_pushWhere($operator, $where);
     }
 
-    protected function _pushSimpleWhere(WhereOperator $operator, string $key, string $condition, mixed $value): static
-    {
+    protected function _pushSimpleWhere(
+        WhereOperator $operator,
+        string $key,
+        string $condition,
+        mixed $value,
+        array $options = [],
+    ): static {
         if (in_array($condition, ['REGEXP', 'RLIKE', 'NOT REGEXP', 'NOT RLIKE'], true)) {
             throw new UnsupportedQueryException('whereRegexp', self::DRIVER);
         }
@@ -69,7 +75,7 @@ class Meilisearch extends DefaultEx
             };
         }
 
-        return parent::_pushSimpleWhere($operator, $key, $condition, $value);
+        return parent::_pushSimpleWhere($operator, $key, $condition, $value, $options);
     }
 
     protected function _whereExpression(
@@ -163,6 +169,7 @@ class Meilisearch extends DefaultEx
             WhereType::RegexpLike  => throw new UnsupportedQueryException('whereRegexpLike', self::DRIVER),
             WhereType::JsonPath    => throw new UnsupportedQueryException('whereJsonExtract', self::DRIVER),
             WhereType::FullText    => throw new UnsupportedQueryException('whereFullText', self::DRIVER),
+            WhereType::Operator    => $this->_buildOperatorCondition($where),
         };
     }
 
@@ -179,6 +186,10 @@ class Meilisearch extends DefaultEx
             'IS NOT NULL'  => $key . ' IS NOT NULL',
             'LIKE'         => $key . ' CONTAINS ' . $this->_quoteFilterValue($value),
             'NOT LIKE'     => $key . ' NOT CONTAINS ' . $this->_quoteFilterValue($value),
+            'ILIKE'        => $key . ' CONTAINS ' . $this->_quoteFilterValue($value),
+            'NOT ILIKE'    => $key . ' NOT CONTAINS ' . $this->_quoteFilterValue($value),
+            'IS DISTINCT FROM' => $this->_buildCompareCondition($key, '!=', $value),
+            'IS NOT DISTINCT FROM' => $this->_buildSafeEqualCondition($key, $value),
             '<=>'          => $this->_buildSafeEqualCondition($key, $value),
             '=', '!=', '<>', '>', '<', '>=', '<=' => $this->_buildCompareCondition($key, $where['condition'], $value),
             default => throw new UnsupportedQueryException(
@@ -186,6 +197,40 @@ class Meilisearch extends DefaultEx
                 self::DRIVER,
             ),
         };
+    }
+
+    private function _buildOperatorCondition(array $where): string
+    {
+        $opts     = $where['options'] ?? [];
+        $operator = $where['compare'];
+        $domain   = $opts['domain'] ?? null;
+        $key      = (string) $where['left'];
+
+        if (in_array($operator, ['~', '~*', '!~', '!~*'], true)) {
+            throw new UnsupportedQueryException('whereRegex', self::DRIVER);
+        }
+
+        if ($domain === 'json') {
+            if (in_array($operator, ['@>', '<@'], true)) {
+                return $this->_buildObjectEqualityFilter($key, (array) $where['right']);
+            }
+
+            throw new UnsupportedQueryException('whereOperator(json,' . $operator . ')', self::DRIVER);
+        }
+
+        if ($domain === 'array' || $domain === 'network' || $domain === 'range' || $domain === 'tsquery') {
+            throw new UnsupportedQueryException('whereOperator(' . ($domain ?? $operator) . ')', self::DRIVER);
+        }
+
+        if ($domain === 'tsvector' && $operator === '@@') {
+            return $key . ' CONTAINS ' . $this->_quoteFilterValue($where['right']);
+        }
+
+        if ($domain === 'concat') {
+            throw new UnsupportedQueryException('whereConcat', self::DRIVER);
+        }
+
+        return $this->_buildCompareCondition($key, $operator === '<>' ? '!=' : $operator, $where['right']);
     }
 
     private function _buildSafeEqualCondition(string $key, mixed $value): string
@@ -322,6 +367,10 @@ class Meilisearch extends DefaultEx
 
         if (in_array($type, ['int', 'tinyint', 'smallint', 'mediumint', 'bigint', 'integer'], true)) {
             return (int) sprintf('%d%03d', (int) (microtime(true) * 1000), random_int(0, 999));
+        }
+
+        if ($type === 'uuid') {
+            return (string) \Flames\Collection\Uuid::v4();
         }
 
         if ($type === 'string' || in_array($type, ['char', 'varchar', 'text', 'longtext'], true)) {

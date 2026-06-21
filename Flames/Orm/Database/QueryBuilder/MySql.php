@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Flames\Orm\Database\QueryBuilder;
 
 use Flames\Collection\Arr;
+use Flames\Orm\Database\QueryBuilder\Support\OperatorSql;
 use Flames\Orm\Database\QueryBuilder\Support\VectorSql;
+use Flames\Orm\Exception\UnsupportedQueryException;
 use Flames\Orm\Database\Type\Kinds;
 use PDO;
 use Exception;
@@ -26,8 +28,13 @@ class MySql extends DefaultEx
 
     // ── WHERE clause ─────────────────────────────────────────────────────────
 
-    protected function _pushSimpleWhere(WhereOperator $operator, string $key, string $condition, mixed $value): static
-    {
+    protected function _pushSimpleWhere(
+        WhereOperator $operator,
+        string $key,
+        string $condition,
+        mixed $value,
+        array $options = [],
+    ): static {
         if ($this->mode === 'model' && isset($this->modelData->column[$key])) {
             $column = $this->modelData->column[$key];
             $value  = match ($condition) {
@@ -40,7 +47,7 @@ class MySql extends DefaultEx
             };
         }
 
-        return parent::_pushSimpleWhere($operator, $key, $condition, $value);
+        return parent::_pushSimpleWhere($operator, $key, $condition, $value, $options);
     }
 
     protected function _nativeWhere(array $data): array
@@ -65,6 +72,7 @@ class MySql extends DefaultEx
                 WhereType::RegexpLike   => $this->_whereRegexpLikePart($where, $data, $whereIndex),
                 WhereType::JsonPath     => $this->_whereJsonPathPart($where, $data, $whereIndex),
                 WhereType::FullText     => $this->_whereFullTextPart($where, $data, $whereIndex),
+                WhereType::Operator     => $this->_whereOperatorPart($where, $data, $whereIndex),
             };
             $fragments[] = [$where['operator']->value, $fragment];
         }
@@ -94,12 +102,16 @@ class MySql extends DefaultEx
             'IS NOT TRUE'  => ["$col IS NOT TRUE", $data, $idx],
             'IS NOT FALSE' => ["$col IS NOT FALSE", $data, $idx],
             'IS NOT UNKNOWN' => ["$col IS NOT UNKNOWN", $data, $idx],
-            'LIKE'         => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, false, true),
-            'NOT LIKE'     => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, true, true),
-            'LIKE_PATTERN' => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, false, false),
-            'NOT_LIKE_PATTERN' => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, true, false),
+            'LIKE'         => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, false, true, false),
+            'NOT LIKE'     => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, true, true, false),
+            'LIKE_PATTERN' => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, false, false, false),
+            'NOT_LIKE_PATTERN' => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, true, false, false),
+            'ILIKE'        => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, false, $w['options']['wrap'] ?? false, true),
+            'NOT ILIKE'    => $this->_whereLikePart($col, $w['value'], $data, $base, $idx, true, $w['options']['wrap'] ?? false, true),
             'REGEXP', 'RLIKE' => $this->_whereRegexpPart($col, $w['value'], $data, $base, $idx, false),
             'NOT REGEXP', 'NOT RLIKE' => $this->_whereRegexpPart($col, $w['value'], $data, $base, $idx, true),
+            'IS DISTINCT FROM' => $this->_whereDistinctPart($col, $w, $data, $base, $idx, false),
+            'IS NOT DISTINCT FROM' => $this->_whereDistinctPart($col, $w, $data, $base, $idx, true),
             default        => $this->_whereComparePart($col, $w, $data, $base, $idx),
         };
     }
@@ -145,14 +157,37 @@ class MySql extends DefaultEx
         int $idx,
         bool $not,
         bool $wrap,
+        bool $ilike = false,
     ): array {
         $data[$base] = $value;
-        $operator    = $not ? 'NOT LIKE' : 'LIKE';
-        $expression  = $wrap
+
+        if ($ilike) {
+            $param = ':' . $base;
+            $expr  = OperatorSql::mysqlIlike($col, $param, $not, $wrap);
+
+            return ['(' . $expr . ')', $data, ++$idx];
+        }
+
+        $operator   = $not ? 'NOT LIKE' : 'LIKE';
+        $expression = $wrap
             ? "$operator CONCAT('%', :$base, '%')"
             : "$operator :$base";
 
         return ["$col $expression", $data, ++$idx];
+    }
+
+    private function _whereDistinctPart(
+        string $col,
+        array $w,
+        array $data,
+        string $base,
+        int $idx,
+        bool $notDistinct,
+    ): array {
+        $data[$base] = $w['value'];
+        $param       = ':' . $base;
+
+        return ['(' . OperatorSql::mysqlDistinctFrom($col, $param, $notDistinct) . ')', $data, ++$idx];
     }
 
     private function _whereRegexpPart(
@@ -327,6 +362,134 @@ class MySql extends DefaultEx
         }
 
         return ['(' . $extract . ' ' . $w['condition'] . ' :' . $valueKey . ')', $data, ++$idx];
+    }
+
+    private function _whereOperatorPart(array $w, array $data, int $idx): array
+    {
+        $opts     = $w['options'] ?? [];
+        $operator = $w['compare'];
+        $domain   = $opts['domain'] ?? null;
+        $col      = ($opts['leftIsValue'] ?? false) || ($opts['leftIsExpression'] ?? false)
+            ? (string) $w['left']
+            : $this->_qualifiedColumn((string) $w['left']);
+
+        if (in_array($operator, ['~', '~*', '!~', '!~*'], true)) {
+            $pattern = $w['right'];
+            if (str_contains($operator, '*') && is_string($pattern)) {
+                $pattern = '(?i)' . $pattern;
+            }
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_pattern';
+            $data[$key] = $pattern;
+            $param = ':' . $key;
+            $expr  = OperatorSql::mysqlRegex($col, $param, $operator);
+
+            return ['(' . $expr . ')', $data, ++$idx];
+        }
+
+        if ($domain === 'json') {
+            return $this->_whereMysqlJsonOperatorPart($w, $data, $idx, $col);
+        }
+
+        if ($domain === 'array') {
+            if ($operator === '&&') {
+                throw new UnsupportedQueryException('whereArrayOverlaps', 'mysql');
+            }
+
+            if (in_array($operator, ['@>', '<@'], true) === false) {
+                throw new UnsupportedQueryException('whereOperator(array,' . $operator . ')', 'mysql');
+            }
+
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_json';
+            $data[$key] = json_encode($w['right'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+            $param = ':' . $key;
+            $expr  = $operator === '@>'
+                ? OperatorSql::mysqlJsonContains($col, $param)
+                : OperatorSql::mysqlJsonContainedBy($col, $param);
+
+            return ['(' . $expr . ')', $data, ++$idx];
+        }
+
+        if ($domain === 'tsvector' && $operator === '@@') {
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_query';
+            $data[$key] = $w['right'];
+
+            return ['(' . $col . " LIKE CONCAT('%', :$key, '%'))", $data, ++$idx];
+        }
+
+        if ($domain === 'tsquery') {
+            throw new UnsupportedQueryException('whereTsQuery*', 'mysql');
+        }
+
+        if ($domain === 'network' || $domain === 'range') {
+            throw new UnsupportedQueryException('whereNetwork*/whereRange*', 'mysql');
+        }
+
+        if ($domain === 'concat') {
+            $compare    = $opts['compare'] ?? '=';
+            $appendKey  = 'where_' . $this->whereBaseIndex . $idx . '_append';
+            $equalsKey  = 'where_' . $this->whereBaseIndex . $idx . '_equals';
+            $data[$appendKey] = $w['right'];
+            $data[$equalsKey] = $opts['compareValue'] ?? null;
+
+            return ['((CONCAT(' . $col . ', :' . $appendKey . ') ' . $compare . ' :' . $equalsKey . '))', $data, ++$idx];
+        }
+
+        if ($opts['leftIsExpression'] ?? false) {
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_value';
+            $data[$key] = $w['right'];
+
+            return ['(' . $col . ' ' . $operator . ' :' . $key . ')', $data, ++$idx];
+        }
+
+        $key = 'where_' . $this->whereBaseIndex . $idx . '_value';
+        $data[$key] = $w['right'];
+
+        return ['(' . $col . ' ' . $operator . ' :' . $key . ')', $data, ++$idx];
+    }
+
+    private function _whereMysqlJsonOperatorPart(array $w, array $data, int $idx, string $col): array
+    {
+        $operator = $w['compare'];
+        $opts     = $w['options'] ?? [];
+
+        if (in_array($operator, ['#>', '#>>'], true)) {
+            $path = $opts['path'] ?? '';
+            $path = str_starts_with((string) $path, '$') ? $path : '$.' . ltrim((string) $path, '.');
+            $pathLit = "'" . str_replace("'", "''", (string) $path) . "'";
+            $extract = $operator === '#>>'
+                ? 'JSON_UNQUOTE(JSON_EXTRACT(' . $col . ', ' . $pathLit . '))'
+                : 'JSON_EXTRACT(' . $col . ', ' . $pathLit . ')';
+            $compare = $opts['compare'] ?? '=';
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_value';
+            $data[$key] = $w['right'];
+
+            return ['(' . $extract . ' ' . $compare . ' :' . $key . ')', $data, ++$idx];
+        }
+
+        if ($operator === '?') {
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_key';
+            $data[$key] = (string) $w['right'];
+            $param = ':' . $key;
+
+            return ['(' . OperatorSql::mysqlJsonHasKey($col, $param) . ')', $data, ++$idx];
+        }
+
+        if (in_array($operator, ['?&', '?|'], true)) {
+            throw new UnsupportedQueryException('whereJsonHasAllKeys/whereJsonHasAnyKey', 'mysql');
+        }
+
+        if (in_array($operator, ['@>', '<@'], true)) {
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_doc';
+            $data[$key] = is_string($w['right']) ? $w['right'] : json_encode($w['right'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+            $param = ':' . $key;
+            $expr  = $operator === '@>'
+                ? OperatorSql::mysqlJsonContains($col, $param)
+                : OperatorSql::mysqlJsonContainedBy($col, $param);
+
+            return ['(' . $expr . ')', $data, ++$idx];
+        }
+
+        throw new UnsupportedQueryException('whereOperator(json,' . $operator . ')', 'mysql');
     }
 
     private function _whereFullTextPart(array $w, array $data, int $idx): array
@@ -591,13 +754,21 @@ class MySql extends DefaultEx
 
     public function insert(Arr|array $data): mixed
     {
-        $data = $this->mode === 'model' ? $this->_prepareModelData((array)$data) : (array)$data;
+        $data = $this->mode === 'model' ? $this->_prepareModelData((array) $data) : (array) $data;
 
-        if ($this->mode === 'model') {
-            $data = $this->_stripNullIdentityColumns($data);
+        if ($this->mode !== 'model') {
+            return $this->_executeInsert($data);
         }
 
-        if (empty($data)) {
+        return $this->_insertWithUuidCollisionRetry(
+            $data,
+            fn (array $payload): mixed => $this->_executeInsert($payload),
+        );
+    }
+
+    private function _executeInsert(array $data): mixed
+    {
+        if ($data === []) {
             throw new Exception("Insert payload in table {$this->table} can't be empty.");
         }
 
@@ -606,13 +777,11 @@ class MySql extends DefaultEx
 
         $this->_prepare("INSERT INTO `{$this->table}` ($cols) VALUES ($vals);")->execute($data);
 
-        $id = $this->connection->lastInsertId();
-
         if ($this->mode === 'model') {
-            return $this->_insertIdentity($id);
+            return $this->_insertIdentity($this->_resolveInsertIdentity($data, $this->connection->lastInsertId()));
         }
 
-        return $id;
+        return $this->connection->lastInsertId();
     }
 
     protected function _stripNullIdentityColumns(array $data): array

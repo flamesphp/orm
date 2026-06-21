@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Flames\Orm\Database\QueryBuilder;
 
 use Flames\Collection\Arr;
+use Flames\Orm\Database\QueryBuilder\Support\OperatorSql;
 use Flames\Orm\Database\Type\Kinds;
 use PDO;
 use Exception;
@@ -145,6 +146,7 @@ class Postgresql extends DefaultEx
                 WhereType::RegexpLike   => $this->_whereRegexpLikePart($where, $data, $whereIndex),
                 WhereType::JsonPath     => $this->_whereJsonPathPart($where, $data, $whereIndex),
                 WhereType::FullText     => $this->_whereFullTextPart($where, $data, $whereIndex),
+                WhereType::Operator     => $this->_whereOperatorPart($where, $data, $whereIndex),
             };
             $fragments[] = [$where['operator']->value, $fragment];
         }
@@ -190,12 +192,16 @@ class Postgresql extends DefaultEx
             'IS NOT TRUE'  => ["$col IS NOT TRUE", $data, $idx],
             'IS NOT FALSE' => ["$col IS NOT FALSE", $data, $idx],
             'IS NOT UNKNOWN' => ["$col IS NOT UNKNOWN", $data, $idx],
-            'LIKE'         => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, false, true),
-            'NOT LIKE'     => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, true, true),
-            'LIKE_PATTERN' => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, false, false),
-            'NOT_LIKE_PATTERN' => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, true, false),
+            'LIKE'         => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, false, true, false),
+            'NOT LIKE'     => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, true, true, false),
+            'LIKE_PATTERN' => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, false, false, false),
+            'NOT_LIKE_PATTERN' => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, true, false, false),
+            'ILIKE'        => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, false, $w['options']['wrap'] ?? false, true),
+            'NOT ILIKE'    => $this->_whereLikePart($col, $w['key'], $w['value'], $data, $base, $idx, true, $w['options']['wrap'] ?? false, true),
             'REGEXP', 'RLIKE' => $this->_whereRegexpPart($col, $w['key'], $w['value'], $data, $base, $idx, false),
             'NOT REGEXP', 'NOT RLIKE' => $this->_whereRegexpPart($col, $w['key'], $w['value'], $data, $base, $idx, true),
+            'IS DISTINCT FROM' => $this->_whereDistinctPart($col, $w, $data, $base, $idx, false),
+            'IS NOT DISTINCT FROM' => $this->_whereDistinctPart($col, $w, $data, $base, $idx, true),
             default        => $this->_whereComparePart($col, $w, $data, $base, $idx),
         };
     }
@@ -250,15 +256,36 @@ class Postgresql extends DefaultEx
         int $idx,
         bool $not,
         bool $wrap,
+        bool $ilike = false,
     ): array {
         $data[$base] = $this->_prepareBindValue($columnKey, $value);
-        $operator    = $not ? 'NOT LIKE' : 'LIKE';
         $param       = $this->_whereParamRef($columnKey, $base, $value);
+        $operator    = match (true) {
+            $ilike && $not => 'NOT ILIKE',
+            $ilike         => 'ILIKE',
+            $not           => 'NOT LIKE',
+            default        => 'LIKE',
+        };
         $expression  = $wrap
             ? "$operator CONCAT('%', $param, '%')"
             : "$operator $param";
 
         return ["$col $expression", $data, ++$idx];
+    }
+
+    private function _whereDistinctPart(
+        string $col,
+        array $w,
+        array $data,
+        string $base,
+        int $idx,
+        bool $notDistinct,
+    ): array {
+        $data[$base] = $this->_prepareBindValue($w['key'], $w['value']);
+        $param       = $this->_whereParamRef($w['key'], $base, $w['value']);
+        $operator    = $notDistinct ? 'IS NOT DISTINCT FROM' : 'IS DISTINCT FROM';
+
+        return ["($col $operator $param)", $data, ++$idx];
     }
 
     private function _whereRegexpPart(
@@ -475,6 +502,150 @@ class Postgresql extends DefaultEx
         ));
 
         return '\'{' . $formatted . '}\'';
+    }
+
+    private function _whereOperatorPart(array $w, array $data, int $idx): array
+    {
+        $opts     = $w['options'] ?? [];
+        $operator = $w['compare'];
+        $domain   = $opts['domain'] ?? null;
+        $leftExpr = ($opts['leftIsValue'] ?? false) || ($opts['leftIsExpression'] ?? false)
+            ? (string) $w['left']
+            : $this->_qualifiedColumn((string) $w['left']);
+
+        if (in_array($operator, ['~', '~*', '!~', '!~*'], true)) {
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_pattern';
+            $data[$key] = $this->_prepareBindValue($w['left'], $w['right']);
+            $param = $this->_whereParamRef($w['left'], $key, $w['right']);
+
+            return ['(' . $leftExpr . ' ' . $operator . ' ' . $param . ')', $data, ++$idx];
+        }
+
+        if ($domain === 'json') {
+            return $this->_whereJsonOperatorPart($w, $data, $idx, $leftExpr);
+        }
+
+        if ($domain === 'array') {
+            $right = is_array($w['right'])
+                ? OperatorSql::pgArrayLiteral($w['right'])
+                : $this->_qualifiedColumn((string) $w['right']);
+
+            return ['(' . $leftExpr . ' ' . $operator . ' ' . $right . ')', $data, ++$idx];
+        }
+
+        if ($domain === 'tsvector' && $operator === '@@') {
+            $param = $this->_pgTsQueryParam((string) $w['right'], $data, $idx);
+
+            return ['(' . $leftExpr . " @@ plainto_tsquery('simple', " . $param . '))', $data, ++$idx];
+        }
+
+        if ($domain === 'tsquery') {
+            if (($opts['unary'] ?? false) === true) {
+                return ['(!! plainto_tsquery(\'simple\', ' . $this->_pgTsQueryParam($w['left'], $data, $idx) . '))', $data, ++$idx];
+            }
+
+            $leftParam  = $this->_pgTsQueryParam((string) $w['left'], $data, $idx++);
+            $rightParam = $this->_pgTsQueryParam((string) $w['right'], $data, $idx);
+
+            return ['((' . $leftParam . ') ' . $operator . ' (' . $rightParam . '))', $data, ++$idx];
+        }
+
+        if ($domain === 'network' || $domain === 'range') {
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_value';
+            $data[$key] = $this->_prepareBindValue($w['left'], $w['right']);
+            $param = $this->_whereParamRef($w['left'], $key, $w['right']);
+
+            return ['(' . $leftExpr . ' ' . $operator . ' ' . $param . ')', $data, ++$idx];
+        }
+
+        if ($domain === 'concat') {
+            $compare      = $opts['compare'] ?? '=';
+            $appendKey    = 'where_' . $this->whereBaseIndex . $idx . '_append';
+            $compareKey   = 'where_' . $this->whereBaseIndex . $idx . '_equals';
+            $data[$appendKey]  = $this->_prepareBindValue($w['left'], $w['right']);
+            $data[$compareKey] = $this->_prepareBindValue($w['left'], $opts['compareValue'] ?? null);
+            $appendParam  = $this->_whereParamRef($w['left'], $appendKey, $w['right']);
+            $compareParam = $this->_whereParamRef($w['left'], $compareKey, $opts['compareValue'] ?? null);
+
+            return ['((' . $leftExpr . ' || ' . $appendParam . ') ' . $compare . ' ' . $compareParam . ')', $data, ++$idx];
+        }
+
+        if ($opts['leftIsExpression'] ?? false) {
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_value';
+            $data[$key] = $this->_prepareBindValue(null, $w['right']);
+            $param = $this->_whereParamRef(null, $key, $w['right']);
+
+            return ['(' . $leftExpr . ' ' . $operator . ' ' . $param . ')', $data, ++$idx];
+        }
+
+        $key = 'where_' . $this->whereBaseIndex . $idx . '_value';
+        $data[$key] = $this->_prepareBindValue($w['left'], $w['right']);
+        $param = $this->_whereParamRef($w['left'], $key, $w['right']);
+
+        return ['(' . $leftExpr . ' ' . $operator . ' ' . $param . ')', $data, ++$idx];
+    }
+
+    private function _pgTsQueryParam(string $query, array &$data, int $idx): string
+    {
+        $key = 'where_' . $this->whereBaseIndex . $idx . '_tsq';
+        $data[$key] = $query;
+
+        return $this->_whereParamRef(null, $key, $query);
+    }
+
+    private function _whereJsonOperatorPart(array $w, array $data, int $idx, string $col): array
+    {
+        $operator = $w['compare'];
+        $opts     = $w['options'] ?? [];
+
+        if (in_array($operator, ['#>', '#>>'], true)) {
+            $pathLit = OperatorSql::pgJsonPathLiteral($opts['path'] ?? []);
+            $extract = $operator === '#>>' ? $col . ' #>> ' . $pathLit : $col . ' #> ' . $pathLit;
+            $compare = $opts['compare'] ?? '=';
+            $key     = 'where_' . $this->whereBaseIndex . $idx . '_value';
+
+            if ($operator === '#>>') {
+                $data[$key] = is_scalar($w['right']) ? (string) $w['right'] : json_encode($w['right'], JSON_UNESCAPED_UNICODE);
+                $param = 'CAST(:' . $key . ' AS text)';
+            } else {
+                $data[$key] = $this->_prepareBindValue($w['left'], $w['right']);
+                $param = $this->_whereParamRef($w['left'], $key, $w['right']);
+            }
+
+            return ['(' . $extract . ' ' . $compare . ' ' . $param . ')', $data, ++$idx];
+        }
+
+        if ($operator === '?') {
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_key';
+            $data[$key] = (string) $w['right'];
+            $param = 'CAST(:' . $key . ' AS text)';
+
+            return ['(' . OperatorSql::pgJsonHasKey($col, $param) . ')', $data, ++$idx];
+        }
+
+        if (in_array($operator, ['?&', '?|'], true)) {
+            $keys = is_array($w['right']) ? $w['right'] : [(string) $w['right']];
+            $literal = OperatorSql::pgJsonKeysLiteral($keys);
+            $expr = $operator === '?&'
+                ? OperatorSql::pgJsonHasAllKeys($col, $literal)
+                : OperatorSql::pgJsonHasAnyKey($col, $literal);
+
+            return ['(' . $expr . ')', $data, ++$idx];
+        }
+
+        if (in_array($operator, ['@>', '<@'], true)) {
+            $key = 'where_' . $this->whereBaseIndex . $idx . '_doc';
+            $data[$key] = is_string($w['right']) ? $w['right'] : json_encode($w['right'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+            $param = 'CAST(:' . $key . ' AS jsonb)';
+
+            return ['(' . $col . ' ' . $operator . ' ' . $param . ')', $data, ++$idx];
+        }
+
+        $key = 'where_' . $this->whereBaseIndex . $idx . '_value';
+        $data[$key] = $this->_prepareBindValue($w['left'], $w['right']);
+        $param = $this->_whereParamRef($w['left'], $key, $w['right']);
+
+        return ['(' . $col . ' ' . $operator . ' ' . $param . ')', $data, ++$idx];
     }
 
     private function _whereFullTextPart(array $w, array $data, int $idx): array
@@ -740,13 +911,21 @@ class Postgresql extends DefaultEx
 
     public function insert(Arr|array $data): mixed
     {
-        $data = $this->mode === 'model' ? $this->_prepareModelData((array)$data) : (array)$data;
+        $data = $this->mode === 'model' ? $this->_prepareModelData((array) $data) : (array) $data;
 
-        if ($this->mode === 'model') {
-            $data = $this->_stripNullIdentityColumns($data);
+        if ($this->mode !== 'model') {
+            return $this->_executeInsert($data);
         }
 
-        if (empty($data)) {
+        return $this->_insertWithUuidCollisionRetry(
+            $data,
+            fn (array $payload): mixed => $this->_executeInsert($payload),
+        );
+    }
+
+    private function _executeInsert(array $data): mixed
+    {
+        if ($data === []) {
             throw new Exception("Insert payload in table {$this->table} can't be empty.");
         }
 
@@ -767,9 +946,9 @@ class Postgresql extends DefaultEx
         $stmt->execute($data);
 
         if ($this->mode === 'model') {
-            $id = $identityColumn !== null ? $stmt->fetchColumn() : false;
+            $driverIdentity = $identityColumn !== null ? $stmt->fetchColumn() : false;
 
-            return $this->_insertIdentity($id);
+            return $this->_insertIdentity($this->_resolveInsertIdentity($data, $driverIdentity));
         }
 
         return $this->connection->lastInsertId();

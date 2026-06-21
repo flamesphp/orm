@@ -20,4 +20,5 @@ enum WhereType
     case RegexpLike;
     case JsonPath;
     case FullText;
+    case Operator;
 }

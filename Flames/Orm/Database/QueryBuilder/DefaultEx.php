@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Flames\Orm\Database\QueryBuilder;
 
 use Flames\Collection\Arr;
+use Flames\Orm\Database\QueryBuilder\Support\ExtendedOperators;
 use Flames\Orm\Database\QueryBuilder\Support\WhereOperators;
 use Exception;
 
@@ -14,6 +15,7 @@ use Exception;
 abstract class DefaultEx
 {
     use WhereOperators;
+    use ExtendedOperators;
     protected string $mode           = 'table';
     protected mixed  $connection;
 
@@ -426,15 +428,26 @@ abstract class DefaultEx
         return $key;
     }
 
-    protected function _pushSimpleWhere(WhereOperator $operator, string $key, string $condition, mixed $value): static
-    {
-        $this->wheres[] = [
+    protected function _pushSimpleWhere(
+        WhereOperator $operator,
+        string $key,
+        string $condition,
+        mixed $value,
+        array $options = [],
+    ): static {
+        $where = [
             'type'      => WhereType::Simple,
             'key'       => $this->_resolveWhereKey($key),
             'condition' => $condition,
             'value'     => $value,
             'operator'  => $operator,
         ];
+
+        if ($options !== []) {
+            $where['options'] = $options;
+        }
+
+        $this->wheres[] = $where;
 
         return $this;
     }
@@ -712,6 +725,224 @@ abstract class DefaultEx
             }
             $data[$key] = $cast::pre($columns[$key], $value);
         }
+        return $data;
+    }
+
+    protected function _primaryKeyColumn(): ?object
+    {
+        if ($this->mode !== 'model') {
+            return null;
+        }
+
+        foreach ($this->modelData->column as $column) {
+            if ($column->primary === true) {
+                return $column;
+            }
+        }
+
+        return null;
+    }
+
+    protected function _usesUuidPrimaryKey(): bool
+    {
+        $column = $this->_primaryKeyColumn();
+
+        return $column !== null
+            && \Flames\Orm\Database\Type\Kinds::isUuidColumn($column);
+    }
+
+    protected function _ensureGeneratedPrimaryKeys(array $data): array
+    {
+        if ($this->mode !== 'model') {
+            return $data;
+        }
+
+        foreach ($this->modelData->column as $column) {
+            if ($column->primary !== true || $column->autoIncrement !== true) {
+                continue;
+            }
+
+            if (\Flames\Orm\Database\Type\Kinds::isUuidColumn($column) === false) {
+                continue;
+            }
+
+            if (array_key_exists($column->property, $data)) {
+                continue;
+            }
+
+            $data[$column->property] = $this->modelCast::pre(
+                $column,
+                (string) \Flames\Collection\Uuid::v4(),
+            );
+        }
+
+        return $data;
+    }
+
+    protected function _resolveInsertIdentity(array $data, mixed $driverIdentity): mixed
+    {
+        if ($this->_usesUuidPrimaryKey()) {
+            $column = $this->_primaryKeyColumn();
+            if ($column === null) {
+                return $driverIdentity;
+            }
+
+            return $data[$column->property] ?? $driverIdentity;
+        }
+
+        return $driverIdentity;
+    }
+
+    private const UUID_INSERT_MAX_ATTEMPTS = 5;
+
+    /**
+     * Retries model inserts when an auto-generated UUID primary key collides.
+     *
+     * @param callable(array): mixed $attemptInsert
+     */
+    protected function _insertWithUuidCollisionRetry(array $data, callable $attemptInsert): mixed
+    {
+        if ($this->mode !== 'model') {
+            throw new Exception('UUID collision retry requires model insert mode.');
+        }
+
+        if ($this->_usesUuidPrimaryKey() === false) {
+            return $attemptInsert($this->_prepareInsertPayload($data));
+        }
+
+        $pkColumn   = $this->_primaryKeyColumn();
+        $pkProperty = $pkColumn?->property;
+
+        if ($pkProperty === null) {
+            return $attemptInsert($this->_prepareInsertPayload($data));
+        }
+
+        if ($this->_insertPayloadHasExplicitPrimaryKey($data, $pkProperty)) {
+            return $attemptInsert($this->_prepareInsertPayload($data));
+        }
+
+        $lastException = null;
+
+        for ($attempt = 1; $attempt <= self::UUID_INSERT_MAX_ATTEMPTS; $attempt++) {
+            $payload = $this->_stripNullIdentityColumns($data);
+            unset($payload[$pkProperty]);
+            $payload = $this->_ensureGeneratedPrimaryKeys($payload);
+
+            if ($payload === []) {
+                throw new Exception("Insert payload in table {$this->table} can't be empty.");
+            }
+
+            try {
+                return $attemptInsert($payload);
+            } catch (\PDOException $exception) {
+                $lastException = $exception;
+
+                if (
+                    $attempt >= self::UUID_INSERT_MAX_ATTEMPTS
+                    || $this->_isUuidPrimaryKeyCollision(
+                        $exception,
+                        $pkColumn,
+                        $payload[$pkProperty] ?? null,
+                    ) === false
+                ) {
+                    throw $exception;
+                }
+            }
+        }
+
+        throw $lastException ?? new Exception(
+            'Insert in table ' . $this->table . ' failed after UUID primary-key collision retries.',
+        );
+    }
+
+    protected function _prepareInsertPayload(array $data): array
+    {
+        $payload = $this->_stripNullIdentityColumns($data);
+
+        return $this->_ensureGeneratedPrimaryKeys($payload);
+    }
+
+    protected function _insertPayloadHasExplicitPrimaryKey(array $data, string $pkProperty): bool
+    {
+        if (array_key_exists($pkProperty, $data) === false) {
+            return false;
+        }
+
+        $value = $data[$pkProperty];
+
+        return $value !== null && $value !== '' && $value !== 0 && $value !== '0';
+    }
+
+    protected function _isUuidPrimaryKeyCollision(
+        \PDOException $exception,
+        object $pkColumn,
+        mixed $attemptedPrimaryKey,
+    ): bool {
+        if ($this->_usesUuidPrimaryKey() === false) {
+            return false;
+        }
+
+        $sqlState   = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+        $driverCode = (int) ($exception->errorInfo[1] ?? 0);
+        $message    = $exception->getMessage();
+
+        $isUniqueViolation = $sqlState === '23505'
+            || ($sqlState === '23000' && in_array($driverCode, [1062, 19, 2627, 2601], true));
+
+        if ($isUniqueViolation === false) {
+            return false;
+        }
+
+        if ($this->_errorTargetsPrimaryKey($message, (string) ($pkColumn->name ?? 'id'), $sqlState, $driverCode) === false) {
+            return false;
+        }
+
+        $attempted = strtolower(trim((string) $attemptedPrimaryKey));
+
+        if ($attempted === '') {
+            return false;
+        }
+
+        return str_contains(strtolower($message), $attempted);
+    }
+
+    protected function _errorTargetsPrimaryKey(
+        string $message,
+        string $pkColumnName,
+        string $sqlState,
+        int $driverCode,
+    ): bool {
+        $lower   = strtolower($message);
+        $pkLower = strtolower($pkColumnName);
+
+        if ($sqlState === '23505') {
+            if (str_contains($lower, '_pkey') || str_contains($lower, 'primary key')) {
+                return true;
+            }
+
+            return str_contains($lower, 'key (' . $pkLower . ')=')
+                || str_contains($lower, 'key ("' . $pkLower . '")=');
+        }
+
+        if ($driverCode === 1062) {
+            return str_contains($lower, "for key 'primary'")
+                || str_contains($lower, 'for key `primary`');
+        }
+
+        if (in_array($driverCode, [2627, 2601], true)) {
+            return str_contains($lower, 'primary key') || str_contains($lower, 'pk_');
+        }
+
+        if ($driverCode === 19) {
+            return str_contains($lower, 'primary key')
+                || str_contains($lower, 'unique constraint failed: ' . $pkLower);
+        }
+
+        return false;
+    }
+
+    protected function _stripNullIdentityColumns(array $data): array
+    {
         return $data;
     }
 

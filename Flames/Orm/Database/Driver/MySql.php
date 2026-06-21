@@ -124,7 +124,9 @@ class Mysql extends DefaultEx
             if ($column->primary)       { $queries[] = "ALTER TABLE `{$data->table}` ADD PRIMARY KEY (`{$column->name}`);"; }
             if ($column->index)         { $queries[] = "ALTER TABLE `{$data->table}` ADD INDEX (`{$column->name}`);"; }
             if ($column->unique)        { $queries[] = "ALTER TABLE `{$data->table}` ADD UNIQUE (`{$column->name}`);"; }
-            if ($column->autoIncrement) { $queries[] = "ALTER TABLE `{$data->table}` MODIFY `{$column->name}` {$column->base} AUTO_INCREMENT;"; }
+            if ($column->autoIncrement && \Flames\Orm\Database\Type\Kinds::isNumericAutoIncrementType($column)) {
+                $queries[] = "ALTER TABLE `{$data->table}` MODIFY `{$column->name}` {$column->base} AUTO_INCREMENT;";
+            }
         }
 
         array_push(
@@ -170,7 +172,11 @@ class Mysql extends DefaultEx
             }
 
             $alter = "ALTER TABLE `{$data->table}` MODIFY `{$column->name}` {$base}";
-            $queries[] = $alter . ($column->autoIncrement ? ' AUTO_INCREMENT' : '') . ';';
+            $queries[] = $alter . (
+                $column->autoIncrement && \Flames\Orm\Database\Type\Kinds::isNumericAutoIncrementType($column)
+                    ? ' AUTO_INCREMENT'
+                    : ''
+            ) . ';';
         }
 
         foreach ($missingDb as $column) {
@@ -185,7 +191,7 @@ class Mysql extends DefaultEx
             }
             $after     = ($prev !== null) ? " AFTER `{$prev->name}`" : '';
             $queries[] = "ALTER TABLE `{$data->table}` ADD `{$column->name}` {$base}{$after};";
-            if ($column->autoIncrement) {
+            if ($column->autoIncrement && \Flames\Orm\Database\Type\Kinds::isNumericAutoIncrementType($column)) {
                 $queries[] = "ALTER TABLE `{$data->table}` MODIFY `{$column->name}` {$base} AUTO_INCREMENT;";
             }
         }

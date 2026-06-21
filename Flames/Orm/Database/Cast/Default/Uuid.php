@@ -10,11 +10,19 @@ class Uuid
 {
     public static function pre($column, $value): string|null
     {
+        if ($value === null || $value === false || $value === '') {
+            return null;
+        }
+
         return PgValue::pre($column, $value, static fn (mixed $input): string => (string) UuidValue::parse($input));
     }
 
     public static function pos($column, $value, $fromDb = false): UuidValue|string|null
     {
+        if ($value === null || $value === false || $value === '') {
+            return null;
+        }
+
         return PgValue::pos($column, $value, static fn (mixed $input): UuidValue => UuidValue::parse($input));
     }
 }
