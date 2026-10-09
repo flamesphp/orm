@@ -10,7 +10,7 @@ use Flames\Orm\Exception\UnsupportedQueryException;
  */
 class Sqlite extends MySql
 {
-    private const DRIVER = 'sqlite';
+    private const string DRIVER = 'sqlite';
 
     protected function _driverSupportsReturning(): bool
     {

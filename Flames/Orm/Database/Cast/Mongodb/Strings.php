@@ -32,6 +32,6 @@ class Strings
             return BsonValue::fromObjectId($value);
         }
 
-        return DefaultStrings::pos($column, $value, $fromDb);
+        return DefaultStrings::pos($column, $value);
     }
 }

@@ -38,11 +38,11 @@ class Set
         }
 
         if (is_array($value)) {
-            return DefaultSet::pos($column, $value, $fromDb);
+            return DefaultSet::pos($column, $value);
         }
 
         if ($value instanceof Arr || $value instanceof ArrImmutable) {
-            return DefaultSet::pos($column, $value, $fromDb);
+            return DefaultSet::pos($column, $value);
         }
 
         if (is_string($value) && str_starts_with(trim($value), '{')) {
@@ -51,7 +51,7 @@ class Set
             return ArrValue::wrap($column, $items);
         }
 
-        return DefaultSet::pos($column, $value, $fromDb);
+        return DefaultSet::pos($column, $value);
     }
 
     /**
@@ -64,8 +64,8 @@ class Set
             return [];
         }
 
-        $items = str_getcsv($trimmed);
+        $items = str_getcsv($trimmed, escape: '\\');
 
-        return array_values(array_map(static fn (string $item): string => trim($item), $items));
+        return array_values(array_map(trim(...), $items));
     }
 }

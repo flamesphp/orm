@@ -22,7 +22,7 @@ class Driver
 {
     protected static $drivers = [];
 
-    public static function getByConfigAndDatabase($config, string $database = null): mixed
+    public static function getByConfigAndDatabase($config, ?string $database = null): mixed
     {
         $database ??= sha1($config);
 
@@ -51,5 +51,10 @@ class Driver
         $driver->database = (string) ($config->database ?? $database ?? '');
 
         return self::$drivers[$database] = $driver;
+    }
+
+    public static function closeAll(): void
+    {
+        self::$drivers = [];
     }
 }

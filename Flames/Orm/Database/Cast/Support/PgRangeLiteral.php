@@ -19,7 +19,7 @@ final class PgRangeLiteral
         $upperInclusive = str_ends_with($value, ']');
         $value          = trim($value, '[()]');
 
-        [$lower, $upper] = array_map('trim', explode(',', $value, 2) + [null, null]);
+        [$lower, $upper] = array_map(trim(...), explode(',', $value, 2) + [null, null]);
 
         return new Range(
             $lower === '' || strtolower((string) $lower) === 'null' ? null : trim((string) $lower, '"'),

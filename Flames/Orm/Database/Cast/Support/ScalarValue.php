@@ -142,18 +142,18 @@ final class ScalarValue
             }
 
             if ($trimmed !== '' && str_starts_with($trimmed, '{') && str_ends_with($trimmed, '}')) {
-                $items = str_getcsv(trim($trimmed, '{}'));
-                return array_values(array_map('trim', $items));
+                $items = str_getcsv(trim($trimmed, '{}'), escape: '\\');
+                return array_values(array_map(trim(...), $items));
             }
 
             return array_values(array_filter(
-                array_map('trim', explode(',', $value)),
+                array_map(trim(...), explode(',', $value)),
                 static fn (string $item): bool => $item !== '',
             ));
         }
 
         if (is_array($value)) {
-            return array_map(static fn (mixed $item): string => self::stringify($item), array_values($value));
+            return array_map(self::stringify(...), array_values($value));
         }
 
         return [self::stringify($value)];

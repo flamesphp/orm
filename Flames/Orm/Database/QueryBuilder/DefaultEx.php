@@ -18,12 +18,14 @@ abstract class DefaultEx
     use WhereOperators;
     use ExtendedOperators;
     protected string $mode           = 'table';
-    protected mixed  $connection;
 
     protected ?string $model     = null;
     protected mixed   $modelData = null;
     protected ?string $modelCast = null;
     protected ?string $table     = null;
+
+    /** Column-name → normalized-type map, built in setModel() for O(1) _whereColumnType() lookups. */
+    protected array $_columnByName = [];
 
     protected array  $wheres         = [];
     protected string $whereBaseIndex = '';
@@ -32,9 +34,8 @@ abstract class DefaultEx
     protected ?int   $limit          = null;
     protected ?int   $offset         = null;
 
-    public function __construct(mixed $connection)
+    public function __construct(protected mixed $connection)
     {
-        $this->connection = $connection;
     }
 
     public function setTable(string $table): static
@@ -54,6 +55,14 @@ abstract class DefaultEx
             \Flames\Orm\Database\DataFactory::getConfigByDatabase($this->modelData->database)->type
         );
         $this->table = $this->modelData->table;
+
+        // Pre-build column-name → type index so _whereColumnType() is O(1) instead of O(n).
+        $map = [];
+        foreach ($this->modelData->column as $col) {
+            $map[$col->name] = $col->type;
+        }
+        $this->_columnByName = $map;
+
         return $this;
     }
 
@@ -351,9 +360,7 @@ abstract class DefaultEx
             throw new Exception('Invalid bitwise operator: ' . $bitOperator);
         }
 
-        if ($compareValue === null) {
-            $compareValue = $operand;
-        }
+        $compareValue ??= $operand;
 
         return $this->_pushWhere($operator, [
             'type'          => WhereType::Bitwise,
@@ -774,7 +781,7 @@ abstract class DefaultEx
                 continue;
             }
 
-            if (array_key_exists($column->property, $data)) {
+            if (array_key_exists((string) $column->property, $data)) {
                 continue;
             }
 

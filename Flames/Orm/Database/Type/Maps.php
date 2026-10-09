@@ -11,7 +11,7 @@ namespace Flames\Orm\Database\Type;
 final class Maps
 {
     /** @var array<string, string> */
-    public const NORMALIZE = [
+    public const array NORMALIZE = [
         'integer'           => 'int',
         'boolean'           => 'bool',
         'numeric'           => 'decimal',
@@ -30,28 +30,28 @@ final class Maps
     ];
 
     /** @var list<string> */
-    public const SERIAL = ['smallserial', 'serial', 'bigserial'];
+    public const array SERIAL = ['smallserial', 'serial', 'bigserial'];
 
     /** @var list<string> */
-    public const RANGE = ['int4range', 'int8range', 'numrange', 'tsrange', 'tstzrange', 'daterange'];
+    public const array RANGE = ['int4range', 'int8range', 'numrange', 'tsrange', 'tstzrange', 'daterange'];
 
     /** @var list<string> */
-    public const NATIVE_GEO = ['point2d', 'line', 'lseg', 'box', 'path', 'polygon2d', 'circle'];
+    public const array NATIVE_GEO = ['point2d', 'line', 'lseg', 'box', 'path', 'polygon2d', 'circle'];
 
     /** @var list<string> */
-    public const NETWORK = ['cidr', 'inet', 'macaddr', 'macaddr8'];
+    public const array NETWORK = ['cidr', 'inet', 'macaddr', 'macaddr8'];
 
     /** @var list<string> */
-    public const FULL_TEXT = ['tsvector', 'tsquery'];
+    public const array FULL_TEXT = ['tsvector', 'tsquery'];
 
     /** @var list<string> */
-    public const TEXT_SEARCH_MEILI = [
+    public const array TEXT_SEARCH_MEILI = [
         'string', 'char', 'varchar', 'text', 'longtext', 'tinytext', 'mediumtext',
         'xml', 'tsvector', 'tsquery', 'json', 'jsonb',
     ];
 
     /** @var array<string, string> */
-    public const CAST = [
+    public const array CAST = [
         'smallint'    => 'Ints',
         'int'         => 'Ints',
         'mediumint'   => 'Ints',
@@ -129,13 +129,13 @@ final class Maps
     ];
 
     /** @var array<string, string> Shared logical aliases on non-PostgreSQL drivers (DDL + cast). */
-    public const STORAGE_ALIASES = [
+    public const array STORAGE_ALIASES = [
         'jsonb'  => 'json',
         'object' => 'json',
     ];
 
     /** @var array<string, string> MySQL/MariaDB DDL renames after PG-native handlers (serials, etc.). */
-    public const MYSQL_FALLBACK = [
+    public const array MYSQL_FALLBACK = [
         'timestamptz'   => 'timestamp',
         'timetz'        => 'time',
         'interval'      => 'varchar',

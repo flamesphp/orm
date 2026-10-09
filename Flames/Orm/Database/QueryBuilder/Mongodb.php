@@ -16,7 +16,7 @@ use MongoDB\Driver\Query;
  */
 class Mongodb extends DefaultEx
 {
-    private const DRIVER = 'mongodb';
+    private const string DRIVER = 'mongodb';
 
     public function __construct(mixed $connection)
     {
@@ -265,7 +265,7 @@ class Mongodb extends DefaultEx
                     continue;
                 }
 
-                if (array_key_exists($column->name, $document)) {
+                if (array_key_exists((string) $column->name, $document)) {
                     $ordered[$column->name] = $document[$column->name];
                     continue;
                 }
@@ -406,7 +406,7 @@ class Mongodb extends DefaultEx
             $modelData = [];
 
             foreach ($columns as $column) {
-                if (array_key_exists($column->name, $document)) {
+                if (array_key_exists((string) $column->name, $document)) {
                     $modelData[$column->property] = $cast::pos($column, $document[$column->name], true);
                     continue;
                 }
@@ -528,7 +528,7 @@ class Mongodb extends DefaultEx
                 continue;
             }
 
-            if (array_key_exists($column->property, $data) === false) {
+            if (array_key_exists((string) $column->property, $data) === false) {
                 continue;
             }
 

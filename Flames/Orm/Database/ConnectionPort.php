@@ -12,7 +12,7 @@ namespace Flames\Orm\Database;
 final class ConnectionPort
 {
     /** @var array<string, array<string, int>> */
-    private const DOCKER_SERVICE_PORTS = [
+    private const array DOCKER_SERVICE_PORTS = [
         'mysql'       => ['mysql' => 3306, 'mariadb' => 3306],
         'mariadb'     => ['mysql' => 3306, 'mariadb' => 3306],
         'postgresql'  => ['postgresql' => 5432, 'postgres' => 5432],
@@ -20,6 +20,11 @@ final class ConnectionPort
         'meilisearch'   => ['meilisearch' => 7700],
         'elasticsearch' => ['elasticsearch' => 9200],
         'opensearch'    => ['opensearch' => 9200],
+        'redis'         => ['redis' => 6379, 'keydb' => 6379, 'valkey' => 6379, 'dragonfly' => 6379],
+        'keydb'         => ['redis' => 6379, 'keydb' => 6379, 'valkey' => 6379, 'dragonfly' => 6379],
+        'valkey'        => ['redis' => 6379, 'keydb' => 6379, 'valkey' => 6379, 'dragonfly' => 6379],
+        'dragonfly'     => ['redis' => 6379, 'keydb' => 6379, 'valkey' => 6379, 'dragonfly' => 6379],
+        'kvrocks'       => ['kvrocks' => 6666],
     ];
 
     public static function resolve(string $host, string $driverType, mixed $configuredPort): int
@@ -44,6 +49,8 @@ final class ConnectionPort
             'meilisearch'                => 7700,
             'elasticsearch'              => 9200,
             'opensearch'                 => 9200,
+            'redis', 'keydb', 'valkey', 'dragonfly' => 6379,
+            'kvrocks'                    => 6666,
             default                      => 0,
         };
     }

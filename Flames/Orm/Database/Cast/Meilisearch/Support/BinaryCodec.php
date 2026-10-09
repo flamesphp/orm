@@ -9,7 +9,7 @@ namespace Flames\Orm\Database\Cast\Meilisearch\Support;
  */
 final class BinaryCodec
 {
-    private const PREFIX = 'b64:';
+    private const string PREFIX = 'b64:';
 
     public static function encode(string $value): string
     {

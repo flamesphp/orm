@@ -13,7 +13,7 @@ use Flames\Orm\Exception\UnsupportedQueryException;
  */
 class Meilisearch extends DefaultEx
 {
-    private const DRIVER = 'meilisearch';
+    private const string DRIVER = 'meilisearch';
 
     protected $client;
 
@@ -313,7 +313,7 @@ class Meilisearch extends DefaultEx
         }
 
         $quoted = implode(', ', array_map(
-            fn ($v): string => $this->_quoteFilterScalar($v),
+            $this->_quoteFilterScalar(...),
             $values,
         ));
 
@@ -514,7 +514,7 @@ class Meilisearch extends DefaultEx
             foreach ($hits as $hit) {
                 $modelData = [];
                 foreach ($columns as $column) {
-                    if (array_key_exists($column->name, $hit)) {
+                    if (array_key_exists((string) $column->name, $hit)) {
                         $modelData[$column->property] = $cast::pos($column, $hit[$column->name], true);
                     }
                 }
@@ -610,7 +610,7 @@ class Meilisearch extends DefaultEx
                 continue;
             }
 
-            if (array_key_exists($column->property, $data) === false) {
+            if (array_key_exists((string) $column->property, $data) === false) {
                 continue;
             }
 

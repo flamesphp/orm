@@ -140,7 +140,7 @@ abstract class Repository
         return $rows[0];
     }
 
-    public static function withFilters(Arr|array $filters, Arr|array $options = null): Arr|null
+    public static function withFilters(Arr|array $filters, Arr|array|null $options = null): Arr|null
     {
         $filters = self::_parseFilters($filters);
         $queryBuilder = self::query();

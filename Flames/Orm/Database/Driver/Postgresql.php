@@ -55,7 +55,7 @@ class Postgresql extends DefaultEx
                         . ' FROM ' . self::_q('flames_migration') . ';'
                     )
                     ->fetchAll();
-            } catch (\PDOException $e) {
+            } catch (\PDOException) {
                 $this->__mountMigration();
                 $rows = $this->connection
                     ->query(
@@ -181,7 +181,7 @@ class Postgresql extends DefaultEx
 
         try {
             $dbColumns = $this->__fetchDbColumns($data->table);
-        } catch (\PDOException $e) {
+        } catch (\PDOException) {
             $this->__mountTable($data, $hash);
             return;
         }
@@ -502,13 +502,7 @@ class Postgresql extends DefaultEx
 
     protected static function __indexColumnsInList(array $columns, array $list): bool
     {
-        foreach ($list as $expected) {
-            if ($expected === $columns) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($list, fn($expected) => $expected === $columns);
     }
 
     protected static function __createIndexQuery(string $table, array $columns, bool $unique): string
@@ -517,7 +511,7 @@ class Postgresql extends DefaultEx
             ? self::__singleColumnIndexName($table, $columns[0], $unique)
             : self::__compositeIndexName($columns);
 
-        $columnSql = implode(', ', array_map(static fn(string $column): string => self::_q($column), $columns));
+        $columnSql = implode(', ', array_map(self::_q(...), $columns));
         $uniqueSql = $unique ? 'UNIQUE ' : '';
 
         return 'CREATE ' . $uniqueSql . 'INDEX IF NOT EXISTS '

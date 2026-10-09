@@ -8,7 +8,7 @@ namespace Flames\Orm\Database\Type;
  */
 final class Kinds
 {
-    public const SPATIAL = [
+    public const array SPATIAL = [
         'geometry',
         'point',
         'linestring',
@@ -19,7 +19,7 @@ final class Kinds
         'geometrycollection',
     ];
 
-    public const UNSIGNED = [
+    public const array UNSIGNED = [
         'int',
         'integer',
         'bigint',
@@ -134,14 +134,14 @@ final class Kinds
         $type = self::normalize($type);
 
         if ($type === 'bit') {
-            return 'Flames\\Orm\\Database\\Cast\\Default\\Bit';
+            return \Flames\Orm\Database\Cast\Default\Bit::class;
         }
 
         $shortName = Maps::CAST[$type] ?? ucfirst($type);
         $class     = 'Flames\\Orm\\Database\\Cast\\Default\\' . $shortName;
 
         if (!class_exists($class)) {
-            return 'Flames\\Orm\\Database\\Cast\\Default\\Strings';
+            return \Flames\Orm\Database\Cast\Default\Strings::class;
         }
 
         return $class;

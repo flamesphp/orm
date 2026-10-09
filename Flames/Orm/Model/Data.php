@@ -11,7 +11,7 @@ use Flames\Collection\Arr;
  */
 class Data
 {
-    private const __VERSION__ = 23;
+    private const int __VERSION__ = 23;
 
     private static array $runtimeCache = [];
 
@@ -80,9 +80,7 @@ class Data
             }
         }
 
-        if ($data->table === null) {
-            $data->table = str_replace('\\', '_', strtolower(substr($class, 17)));
-        }
+        $data->table ??= str_replace('\\', '_', strtolower(substr($class, 17)));
 
         foreach ($reflection->getProperties() as $property) {
             $propName = $property->getName();
@@ -118,9 +116,7 @@ class Data
                         $column->nullable = true;
                     } elseif ($column->phpType === null) {
                         $column->phpType = $tName;
-                        if ($column->type === null) {
-                            $column->type = $tName;
-                        }
+                        $column->type ??= $tName;
                     }
                 }
             } elseif ($type !== null) {
@@ -150,9 +146,7 @@ class Data
                 if (isset($args['unsigned']))      { $column->unsigned      = $args['unsigned'];      }
             }
 
-            if ($column->name === null) {
-                $column->name = $propName;
-            }
+            $column->name ??= $propName;
 
             if ($column->primary && $column->index) {
                 throw new \Exception("Property {$propName} on class {$data->class} can't be primary-key and index together.");

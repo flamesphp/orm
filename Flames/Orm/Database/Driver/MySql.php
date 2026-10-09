@@ -48,7 +48,7 @@ class Mysql extends DefaultEx
                 $rows = $this->connection
                     ->query('SELECT `class`, `hash`, `version` FROM `flames_migration`;')
                     ->fetchAll();
-            } catch (\PDOException $e) {
+            } catch (\PDOException) {
                 $this->__mountMigration();
                 $rows = $this->connection
                     ->query('SELECT `class`, `hash`, `version` FROM `flames_migration`;')
@@ -146,7 +146,7 @@ class Mysql extends DefaultEx
     {
         try {
             $stmt = $this->connection->query('SHOW COLUMNS FROM `' . $data->table . '`;');
-        } catch (\PDOException $e) {
+        } catch (\PDOException) {
             $this->__mountTable($data, $hash);
             return;
         }
@@ -380,13 +380,7 @@ class Mysql extends DefaultEx
 
     protected static function __indexColumnsInList(array $columns, array $list): bool
     {
-        foreach ($list as $expected) {
-            if ($expected === $columns) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($list, fn($expected) => $expected === $columns);
     }
 
     protected static function __addCompositeIndexQuery(string $table, array $columns): string

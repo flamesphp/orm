@@ -11,7 +11,7 @@ use Flames\Collection\Arr;
  */
 class Data
 {
-    private const __VERSION__ = 1;
+    private const int __VERSION__ = 1;
 
     private static array $runtimeCache = [];
 

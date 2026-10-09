@@ -31,7 +31,7 @@ class Bit
 
         if (is_string($value)) {
             return $bits === 1
-                ? (ord($value[0] ?? "\0") & 1) === 1
+                ? (ord(($value[0] ?? "\0")[0]) & 1) === 1
                 : self::__unpack($value, $bits);
         }
 
@@ -51,7 +51,7 @@ class Bit
         if (is_string($value)) {
             if ($value === '' || strlen($value) === 1) {
                 return $bits === 1
-                    ? (ord($value[0] ?? "\0") & 1)
+                    ? (ord(($value[0] ?? "\0")[0]) & 1)
                     : self::__unpack($value, $bits);
             }
 

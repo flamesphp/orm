@@ -14,7 +14,7 @@ use Flames\Orm\Exception\UnsupportedQueryException;
  */
 final class MongoFilter
 {
-    private const DRIVER = 'mongodb';
+    private const string DRIVER = 'mongodb';
 
     /**
      * @param list<array<string, mixed>> $wheres

@@ -22,7 +22,7 @@ class Bit
         }
 
         if ($bits === 1) {
-            return (ord($packed[0] ?? "\0") & 1) === 1;
+            return (ord(($packed[0] ?? "\0")[0]) & 1) === 1;
         }
 
         return DefaultBit::pos($column, $packed);

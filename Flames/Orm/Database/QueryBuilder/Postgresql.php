@@ -18,11 +18,13 @@ class Postgresql extends DefaultEx
     // Per-table column list (survives across requests in long-running processes)
     private static array $columnCache = [];
 
-    // Cached SELECT column SQL string per table (avoids rebuilding string on each get())
-    private static array $selectSqlCache = [];
+    // Cached SELECT column SQL string per table (table mode) and per model class (model mode)
+    private static array $selectSqlCache      = [];
+    private static array $modelSelectSqlCache = [];
 
-    // Prepared statement cache keyed by connection-id + query hash
-    private static array $stmtCache = [];
+    // Prepared statement cache keyed by connection-id + query hash; bounded to avoid memory growth
+    private static array $stmtCache    = [];
+    private const int        STMT_CACHE_MAX = 512;
 
     // ── Identifier quoting ────────────────────────────────────────────────────
 
@@ -329,13 +331,9 @@ class Postgresql extends DefaultEx
             return null;
         }
 
-        foreach ($this->modelData->column as $column) {
-            if ($column->name === $columnName) {
-                return Kinds::normalize($column->type);
-            }
-        }
-
-        return null;
+        return isset($this->_columnByName[$columnName])
+            ? Kinds::normalize($this->_columnByName[$columnName])
+            : null;
     }
 
     private function _whereRawPart(array $w, array $data, int $idx): array
@@ -707,6 +705,11 @@ class Postgresql extends DefaultEx
     private function _selectColumnsSql(): string
     {
         if ($this->mode === 'model') {
+            $cacheKey = $this->modelData->class . ':' . $this->table;
+            if (isset(self::$modelSelectSqlCache[$cacheKey])) {
+                return self::$modelSelectSqlCache[$cacheKey];
+            }
+
             $parts = [];
             foreach ($this->modelData->column as $col) {
                 $expression = match (true) {
@@ -719,7 +722,7 @@ class Postgresql extends DefaultEx
                 $parts[] = $expression . ' AS ' . $this->_q($this->table . '.' . $col->name);
             }
 
-            return implode(",\r\n", $parts);
+            return self::$modelSelectSqlCache[$cacheKey] = implode(",\r\n", $parts);
         }
 
         return self::$selectSqlCache[$this->table] ??= implode(",\r\n", array_map(
@@ -779,7 +782,16 @@ class Postgresql extends DefaultEx
     private function _prepare(string $sql): \PDOStatement
     {
         $key = spl_object_id($this->connection) . ':' . $sql;
-        return self::$stmtCache[$key] ??= $this->connection->prepare($sql);
+
+        if (isset(self::$stmtCache[$key])) {
+            return self::$stmtCache[$key];
+        }
+
+        if (count(self::$stmtCache) >= self::STMT_CACHE_MAX) {
+            unset(self::$stmtCache[array_key_first(self::$stmtCache)]);
+        }
+
+        return self::$stmtCache[$key] = $this->connection->prepare($sql);
     }
 
     // ── Query builders ────────────────────────────────────────────────────────
@@ -828,47 +840,34 @@ class Postgresql extends DefaultEx
         $class  = $this->modelData->class;
         $models = Arr();
 
+        // Pre-compute alias keys once per query — not once per row × column.
+        $prefix  = $this->table . '.';
+        $colMeta = [];
+        foreach ($this->modelData->column as $col) {
+            $alias     = $prefix . $col->name;
+            $colMeta[] = [
+                'property' => $col->property,
+                'col'      => $col,
+                'alias'    => $alias,
+                'under'    => str_replace('.', '_', $alias),
+                'name'     => $col->name,
+            ];
+        }
+
         while ($row = $stmt->fetch()) {
             $modelData = [];
-            foreach ($this->modelData->column as $col) {
-                $value = $this->_hydrateRowValue($row, $col->name);
-                if ($value !== null || $this->_hydrateRowValueExists($row, $col->name)) {
-                    $modelData[$col->property] = $cast::pos($col, $value, true);
+            foreach ($colMeta as $meta) {
+                if (array_key_exists($meta['alias'], $row)) {
+                    $modelData[$meta['property']] = $cast::pos($meta['col'], $row[$meta['alias']], true);
+                } elseif (array_key_exists($meta['under'], $row)) {
+                    $modelData[$meta['property']] = $cast::pos($meta['col'], $row[$meta['under']], true);
+                } elseif (array_key_exists($meta['name'], $row)) {
+                    $modelData[$meta['property']] = $cast::pos($meta['col'], $row[$meta['name']], true);
                 }
             }
             $models[] = new $class($modelData, true);
         }
         return $models;
-    }
-
-    private function _hydrateRowValue(array $row, string $columnName): mixed
-    {
-        $alias      = $this->table . '.' . $columnName;
-        $underscore = str_replace('.', '_', $alias);
-
-        if (array_key_exists($alias, $row)) {
-            return $row[$alias];
-        }
-
-        if (array_key_exists($underscore, $row)) {
-            return $row[$underscore];
-        }
-
-        if (array_key_exists($columnName, $row)) {
-            return $row[$columnName];
-        }
-
-        return null;
-    }
-
-    private function _hydrateRowValueExists(array $row, string $columnName): bool
-    {
-        $alias      = $this->table . '.' . $columnName;
-        $underscore = str_replace('.', '_', $alias);
-
-        return array_key_exists($alias, $row)
-            || array_key_exists($underscore, $row)
-            || array_key_exists($columnName, $row);
     }
 
     // ── Prepare model data (cast pos → pre) ───────────────────────────────────
@@ -1007,7 +1006,7 @@ class Postgresql extends DefaultEx
         }
 
         $cols = implode(', ', array_map(fn($k) => $this->_q($this->_colName($k)), array_keys($data)));
-        $vals = implode(', ', array_map(fn($k) => $this->_sqlValueExpression($k), array_keys($data)));
+        $vals = implode(', ', array_map($this->_sqlValueExpression(...), array_keys($data)));
 
         $sql = 'INSERT INTO ' . $this->_tableRef() . " ($cols) VALUES ($vals)";
 
@@ -1038,7 +1037,7 @@ class Postgresql extends DefaultEx
                 continue;
             }
 
-            if (array_key_exists($column->property, $data) === false) {
+            if (array_key_exists((string) $column->property, $data) === false) {
                 continue;
             }
 

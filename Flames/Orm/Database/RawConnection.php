@@ -16,7 +16,7 @@ class RawConnection
 {
     protected static $connections = [];
 
-    public static function getByConfigAndDatabase($config, string $database = null): mixed
+    public static function getByConfigAndDatabase($config, ?string $database = null): mixed
     {
         $database ??= sha1($config);
 
@@ -94,5 +94,23 @@ class RawConnection
         }
 
         return new RawConnection\Mongodb($uri, (string) $config->name, $config);
+    }
+
+    public static function closeAll(): void
+    {
+        foreach (self::$connections as $connection) {
+            self::disconnect($connection);
+        }
+
+        self::$connections = [];
+    }
+
+    private static function disconnect(mixed $connection): void
+    {
+        try {
+            if ($connection instanceof RawConnection\Pdo) {
+                return;
+            }
+        } catch (\Throwable) {}
     }
 }

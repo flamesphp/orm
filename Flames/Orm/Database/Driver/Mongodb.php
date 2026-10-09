@@ -12,17 +12,14 @@ class Mongodb extends DefaultEx
 {
     protected const __VERSION__ = 1;
 
-    protected \Flames\Orm\Database\RawConnection\Mongodb $connection;
-
     /** @var array<string, true> */
     protected array $collectionsSynced = [];
 
     /** @var array<string, string> */
     protected array $migrationHashes = [];
 
-    public function __construct(\Flames\Orm\Database\RawConnection\Mongodb $connection)
+    public function __construct(protected \Flames\Orm\Database\RawConnection\Mongodb $connection)
     {
-        $this->connection = $connection;
     }
 
     public function getConnection(): \Flames\Orm\Database\RawConnection\Mongodb

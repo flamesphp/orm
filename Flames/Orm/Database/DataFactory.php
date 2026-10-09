@@ -17,9 +17,7 @@ class DataFactory
 
     public static function getConfigByDatabase($database = null)
     {
-        if ($database === null) {
-            $database = Env::get('DATABASE_DEFAULT');
-        }
+        $database ??= Env::get('DATABASE_DEFAULT');
 
         if (isset(self::$databases[$database]) === true) {
             return self::$databases[$database];

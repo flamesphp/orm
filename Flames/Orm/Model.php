@@ -79,7 +79,7 @@ abstract class Model
         $data = $this->toArray();
 
         foreach ($data as $key => $_) {
-            if (in_array($key, $this->__changed) === false) {
+            if (!isset($this->__changed[$key])) {
                 unset($data[$key]);
             }
         }
@@ -120,6 +120,60 @@ abstract class Model
             ->delete();
 
         $this->__invalidateInstance();
+    }
+
+    /**
+     * Refreshes this instance with the latest data from the database.
+     *
+     * Executes a SELECT by primary key against the live database — no in-memory
+     * cache is consulted. Returns true when the record was found and the instance
+     * was updated, false when the row no longer exists (e.g. hard-deleted by
+     * another process). withTrashed() is used internally so that a soft-deleted
+     * record still refreshes rather than silently returning false.
+     *
+     * After a successful sync __changed is cleared and a fresh snapshot is taken,
+     * so the next save() will only send columns that changed after the sync.
+     */
+    public function sync(): bool
+    {
+        $this->__assertNotDestroyed();
+
+        $class = static::class;
+        static::__constructStatic();
+
+        $indexColumn = self::resolveIndexColumn($class);
+        $primaryKey  = $this->{$indexColumn->property};
+
+        if ($primaryKey === null) {
+            throw new Error('Cannot sync a model without a primary key value.');
+        }
+
+        self::_verifyConnection($class);
+
+        $rows = self::newQueryBuilder($class)
+            ->withTrashed()
+            ->where($indexColumn->property, $primaryKey)
+            ->limit(1)
+            ->get();
+
+        if ($rows->count === 0) {
+            return false;
+        }
+
+        /** @var static $fresh */
+        $fresh = $rows[0];
+
+        foreach (self::$_data[$class]->column as $column) {
+            $property = $column->property;
+            try {
+                $this->{$property} = $fresh->{$property};
+            } catch (\TypeError) {}
+        }
+
+        $this->__changed  = null;
+        $this->__snapshot = $this->__columnSnapshot();
+
+        return true;
     }
 
     public static function newQueryBuilder(?string $class = null): Database\QueryBuilder\DefaultEx
@@ -255,11 +309,11 @@ abstract class Model
         }
 
         if ($onlyKeys === true) {
-            return Arr($this->__changed);
+            return Arr(array_keys($this->__changed));
         }
 
         $data = Arr();
-        foreach ($this->__changed as $key) {
+        foreach ($this->__changed as $key => $_) {
             $data[$key] = $this->{$key};
         }
 
@@ -279,7 +333,7 @@ abstract class Model
         foreach (self::$_data[$class]->column as $column) {
             try {
                 $data[$column->property] = $this->{$column->property};
-            } catch (\Error $_) {
+            } catch (\Error) {
                 $data[$column->property] = null;
             }
         }
@@ -333,23 +387,34 @@ abstract class Model
             $data = (array) $data;
         }
 
+        // Fast path used by query-builder hydration: data is already cast by the driver,
+        // so skip castToProperty() entirely and assign directly. This eliminates the
+        // double-cast that would otherwise happen (once in the QB, once here).
+        if ($ignoreChanged === true) {
+            if (is_array($data)) {
+                foreach ($data as $key => $value) {
+                    try {
+                        $this->{$key} = $value;
+                    } catch (\TypeError) {}
+                }
+            }
+            $this->__changed  = null;
+            $this->__snapshot = $this->__columnSnapshot();
+            return;
+        }
+
         if (is_array($data) === true) {
             foreach ($data as $key => $value) {
                 try {
                     $this->__set($key, $value);
-                } catch (\TypeError $_) {
+                } catch (\TypeError) {
                 }
             }
         }
 
-        $data = $this->toArray();
-        foreach ($data as $key => $value) {
+        $allData = $this->toArray();
+        foreach ($allData as $key => $value) {
             $this->__set($key, $value);
-        }
-
-        if ($ignoreChanged === true) {
-            $this->__changed  = null;
-            $this->__snapshot = $this->__columnSnapshot();
         }
     }
 
@@ -367,13 +432,9 @@ abstract class Model
             } catch (\TypeError) {
             }
 
-            if ($this->__changed === null) {
-                $this->__changed = [];
-            }
+            $this->__changed ??= [];
 
-            if (in_array($key, $this->__changed) === false) {
-                $this->__changed[] = $key;
-            }
+            $this->__changed[$key] = true;
         }
     }
 
@@ -501,14 +562,10 @@ abstract class Model
             return;
         }
 
-        if ($this->__changed === null) {
-            $this->__changed = [];
-        }
+        $this->__changed ??= [];
 
         foreach ($keys as $key) {
-            if (in_array($key, $this->__changed, true) === false) {
-                $this->__changed[] = $key;
-            }
+            $this->__changed[$key] = true;
         }
     }
 

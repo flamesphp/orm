@@ -15,14 +15,11 @@ class Elasticsearch extends DefaultEx
 {
     protected const __VERSION__ = 1;
 
-    protected \Flames\Orm\Database\RawConnection\Elasticsearch $connection;
-
     /** @var list<string> */
     protected array $allIndexes = [];
 
-    public function __construct(\Flames\Orm\Database\RawConnection\Elasticsearch $connection)
+    public function __construct(protected \Flames\Orm\Database\RawConnection\Elasticsearch $connection)
     {
-        $this->connection = $connection;
     }
 
     public function getConnection(): \Flames\Orm\Database\RawConnection\Elasticsearch

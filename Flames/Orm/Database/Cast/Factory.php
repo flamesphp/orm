@@ -20,7 +20,7 @@ class Factory
         $class = 'Flames\\Orm\\Database\\Cast\\' . ucfirst($type);
 
         if (!class_exists($class)) {
-            $class = 'Flames\\Orm\\Database\\Cast\\DefaultEx';
+            $class = \Flames\Orm\Database\Cast\DefaultEx::class;
         }
 
         return self::$cache[$type] = $class;

@@ -414,7 +414,7 @@ class Elasticsearch extends DefaultEx
             $modelData = [];
 
             foreach ($columns as $column) {
-                if (array_key_exists($column->name, $source)) {
+                if (array_key_exists((string) $column->name, $source)) {
                     $modelData[$column->property] = $cast::pos($column, $source[$column->name], true);
                 }
             }
@@ -510,7 +510,7 @@ class Elasticsearch extends DefaultEx
                 continue;
             }
 
-            if (array_key_exists($column->property, $data) === false) {
+            if (array_key_exists((string) $column->property, $data) === false) {
                 continue;
             }
 
