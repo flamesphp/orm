@@ -22,7 +22,7 @@ class Data
         }
 
         $path        = ROOT_PATH . str_replace('\\', '/', $class) . '.php';
-        $basePath    = ROOT_PATH . '.cache/.flames/model/';
+        $basePath    = rtrim(\Flames\Framework\Cache::getPath(), '/') . '/.flames/model/';
         $cachePath   = $basePath . sha1($class);
         $currentTime = filemtime($path);
 
